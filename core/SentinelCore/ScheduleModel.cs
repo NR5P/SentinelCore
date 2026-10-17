@@ -87,11 +87,31 @@ public sealed record Schedule(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
 {
+    // "Only if the weather agrees": every test must hold for a timed firing to go ahead, so
+    // "6:00 every morning, sprinklers on" can add "only if there's been half an inch of rain or
+    // less in the last 3 days". For Kind "weather" these are instead the trigger - the schedule
+    // fires when they all become true. Empty means no weather involved. The weather itself lives
+    // in the dashboard (SentinelCore.Web), which ScheduleWeather asks; see ScheduleWeatherTest.
+    public IReadOnlyList<ScheduleWeatherTest> WeatherTests { get; init; } = [];
+
+    // Kind "weather" only: whether the tests held at the last check (so it fires on the change
+    // to true, not on every check while it stays true) and when it last fired (so a test
+    // flickering around its threshold can't fire it more than once per quiet period).
+    public bool? WeatherHeld { get; init; }
+    public DateTimeOffset? WeatherFiredAtUtc { get; init; }
+
     public const string KindDaily = "daily";
     public const string KindInterval = "interval";
     public const string KindCron = "cron";
     public const string KindOnce = "once";
     public const string KindSolar = "solar";
+
+    // Fires when the weather tests become true, checked every WeatherCheckSeconds (inside
+    // WindowStart/WindowEnd when set) and at most once per WeatherQuietPeriod - the same cadence
+    // the Organizer's weather automations use.
+    public const string KindWeather = "weather";
+    public const int WeatherCheckSeconds = 30 * 60;
+    public static readonly TimeSpan WeatherQuietPeriod = TimeSpan.FromHours(12);
 
     public const string SolarSunrise = "sunrise";
     public const string SolarSunset = "sunset";
@@ -112,7 +132,7 @@ public sealed record Schedule(
     public const string CatchUpRunOnce = "runOnce";
 
     public static readonly IReadOnlyList<string> KnownKinds =
-        [KindDaily, KindInterval, KindCron, KindOnce, KindSolar];
+        [KindDaily, KindInterval, KindCron, KindOnce, KindSolar, KindWeather];
 
     public static readonly IReadOnlyList<string> KnownSolarEvents =
         [SolarSunrise, SolarSunset, SolarDusk, SolarDawn];
@@ -131,6 +151,30 @@ public sealed record Schedule(
     // Only "solar" needs coordinates, and the settings that carry them are optional - so this is
     // what every layer that might have to explain "set your location first" tests against.
     public bool NeedsLocation => string.Equals(Kind, KindSolar, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsWeatherKind => string.Equals(Kind, KindWeather, StringComparison.OrdinalIgnoreCase);
+}
+
+// One weather test, measured by the dashboard's WeatherRuleMetrics: Metric is one of its names
+// (rainPast, rainNext, snowNext, lowNext, highNext, rainChanceNext, tempNow), Op is "atLeast" or
+// "atMost", Value is in inches, °F or percent to suit, and Window is how many days back
+// (rainPast) or ahead (the forecasts) to look. Kept as plain strings here because this project
+// has no weather code of its own - the dashboard is the authority on what the names mean.
+public sealed record ScheduleWeatherTest(string Metric, string Op, double Value, int Window)
+{
+    public const string OpAtLeast = "atLeast";
+    public const string OpAtMost = "atMost";
+
+    public static readonly IReadOnlyList<string> KnownMetrics =
+        ["rainPast", "rainNext", "snowNext", "lowNext", "highNext", "rainChanceNext", "tempNow"];
+
+    public static readonly IReadOnlyList<string> KnownOps = [OpAtLeast, OpAtMost];
+
+    // WeatherService keeps 14 days of rain history; the forecast runs 7 days out.
+    public const int MaxPastDays = 14;
+    public const int MaxForecastDays = 7;
+
+    public static int MaxWindow(string metric) => metric == "rainPast" ? MaxPastDays : MaxForecastDays;
 }
 
 // The darkness levels offered as presets in every editor, so nobody has to know that "civil

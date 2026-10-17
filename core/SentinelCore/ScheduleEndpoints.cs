@@ -33,6 +33,11 @@ public sealed class ScheduleDto
     public string WebhookContentType { get; set; } = "application/json";
 
     public string CatchUpPolicy { get; set; } = Schedule.CatchUpSkip;
+
+    // Null on an update means "leave them as they are", so a client that doesn't know about
+    // weather tests yet (an older app) can edit a schedule without quietly dropping them. An
+    // empty list removes them.
+    public List<ScheduleWeatherTest>? WeatherTests { get; set; }
 }
 
 // /api/schedules is protected the same way as every other /api/* route here - see
@@ -62,6 +67,12 @@ public static class ScheduleEndpoints
                 deviceActions = new[] { "on", "off", "toggle", "open", "close", "stop", "press", "lock", "unlock" },
                 tokens = AutomationTemplate.ScheduleTokens,
                 minimumIntervalSeconds = ScheduleTiming.MinimumIntervalSeconds,
+                weatherMetrics = ScheduleWeatherTest.KnownMetrics,
+                weatherOps = ScheduleWeatherTest.KnownOps,
+                weatherMaxPastDays = ScheduleWeatherTest.MaxPastDays,
+                weatherMaxForecastDays = ScheduleWeatherTest.MaxForecastDays,
+                weatherCheckMinutes = Schedule.WeatherCheckSeconds / 60,
+                weatherQuietHours = (int)Schedule.WeatherQuietPeriod.TotalHours,
 
                 // So a client can grey out the sun-following options and say why, rather than
                 // offering a choice that would silently never fire.
@@ -141,11 +152,16 @@ public static class ScheduleEndpoints
         group.MapPut("/{id:guid}", async (
             Guid id, ScheduleDto dto, IScheduleStore store, ScheduleContext context, CancellationToken ct) =>
         {
-            var errors = Validate(dto, context);
-            if (errors.Count > 0) return Results.BadRequest(new { errors });
-
             var existing = await store.GetAsync(id, ct);
             if (existing is null) return Results.NotFound();
+
+            // A client that doesn't send weather tests keeps the ones already there - see
+            // ScheduleDto.WeatherTests. Filled in before validating, so a weather schedule edited
+            // from such a client still has the tests it needs.
+            dto.WeatherTests ??= [.. existing.WeatherTests];
+
+            var errors = Validate(dto, context);
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
 
             var now = DateTimeOffset.UtcNow;
             var schedule = ToSchedule(dto, id, existing.CreatedAt, now);
@@ -202,6 +218,10 @@ public static class ScheduleEndpoints
             ? "every day"
             : "on " + string.Join(", ", schedule.DaysOfWeek.OrderBy(d => d).Select(d => ((DayOfWeek)d).ToString()));
 
+        var weather = schedule.WeatherTests.Count > 0 && !schedule.IsWeatherKind
+            ? " Only if the weather tests all pass at that moment - otherwise it's skipped, and the history says why."
+            : "";
+
         return schedule.Kind?.ToLowerInvariant() switch
         {
             Schedule.KindDaily => $"At {schedule.TimeOfDay}, {days}.",
@@ -211,8 +231,9 @@ public static class ScheduleEndpoints
                 ? $"Once, at {TimeZoneInfo.ConvertTime(runAt, context.TimeZone):yyyy-MM-dd HH:mm}."
                 : "Once, at a time that hasn't been set.",
             Schedule.KindSolar => DescribeSolar(schedule, days),
+            Schedule.KindWeather => DescribeWeather(schedule),
             _ => "This schedule's timing isn't set up yet."
-        };
+        } + weather;
     }
 
     private static string DescribeInterval(Schedule schedule)
@@ -229,6 +250,18 @@ public static class ScheduleEndpoints
             : "";
 
         return $"Every {every}{window}.";
+    }
+
+    private static string DescribeWeather(Schedule schedule)
+    {
+        var window = ScheduleTiming.TryParseTimeOfDay(schedule.WindowStart, out _) &&
+                     ScheduleTiming.TryParseTimeOfDay(schedule.WindowEnd, out _)
+            ? $" between {schedule.WindowStart} and {schedule.WindowEnd}"
+            : "";
+
+        return $"Checks the weather every {Schedule.WeatherCheckSeconds / 60} minutes{window} and runs when the weather " +
+               $"tests all come true - once, then not again for at least {Schedule.WeatherQuietPeriod.TotalHours:0} hours, " +
+               "and not until they've stopped being true in between.";
     }
 
     private static string DescribeSolar(Schedule schedule, string days)
@@ -257,7 +290,7 @@ public static class ScheduleEndpoints
     private static string Capitalise(string value) =>
         value.Length == 0 ? value : char.ToUpperInvariant(value[0]) + value[1..];
 
-    internal static Schedule ToSchedule(ScheduleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
+    public static Schedule ToSchedule(ScheduleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
         id,
         dto.Name.Trim(),
         dto.Enabled,
@@ -294,7 +327,17 @@ public static class ScheduleEndpoints
         NextDueUtc: null,
         RunCount: 0,
         createdAt,
-        updatedAt);
+        updatedAt)
+    {
+        WeatherTests = (dto.WeatherTests ?? [])
+            .Select(test => test with
+            {
+                Metric = Normalise(test.Metric, ScheduleWeatherTest.KnownMetrics, test.Metric?.Trim() ?? ""),
+                Op = Normalise(test.Op, ScheduleWeatherTest.KnownOps, ScheduleWeatherTest.OpAtLeast),
+                Window = Math.Clamp(test.Window, 1, ScheduleWeatherTest.MaxWindow(Normalise(test.Metric, ScheduleWeatherTest.KnownMetrics, "")))
+            })
+            .ToList()
+    };
 
     private static string Normalise(string? value, IReadOnlyList<string> known, string fallback) =>
         known.FirstOrDefault(k => string.Equals(k, value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? fallback;
@@ -302,7 +345,7 @@ public static class ScheduleEndpoints
     // Everything that would otherwise become a schedule that quietly never fires. A schedule
     // that looks saved and does nothing is the worst outcome here, so each case is refused with
     // a message saying what to do about it.
-    internal static List<string> Validate(ScheduleDto dto, ScheduleContext context, bool forRestore = false)
+    public static List<string> Validate(ScheduleDto dto, ScheduleContext context, bool forRestore = false)
     {
         var errors = new List<string>();
 
@@ -349,6 +392,20 @@ public static class ScheduleEndpoints
                     errors.Add("That date and time has already passed.");
                 break;
 
+            case Schedule.KindWeather:
+                if (dto.WeatherTests is not { Count: > 0 })
+                    errors.Add("Add at least one weather test - it's what this schedule waits for.");
+
+                var weatherStartBlank = string.IsNullOrWhiteSpace(dto.WindowStart);
+                var weatherEndBlank = string.IsNullOrWhiteSpace(dto.WindowEnd);
+                if (!weatherStartBlank && !ScheduleTiming.TryParseTimeOfDay(dto.WindowStart, out _))
+                    errors.Add("Window start must be in 24-hour HH:mm form, or left empty.");
+                if (!weatherEndBlank && !ScheduleTiming.TryParseTimeOfDay(dto.WindowEnd, out _))
+                    errors.Add("Window end must be in 24-hour HH:mm form, or left empty.");
+                if (weatherStartBlank != weatherEndBlank)
+                    errors.Add("Set both ends of the time window, or leave both empty to check all day.");
+                break;
+
             case Schedule.KindSolar:
                 // Not on restore: the location arrives in the same backup, in the settings half,
                 // which is written moments before this and may not have been re-read yet. Should
@@ -361,6 +418,18 @@ public static class ScheduleEndpoints
                     errors.Add($"The darkness level must be between {SolarCalculator.MinimumElevationDegrees} and {SolarCalculator.MaximumElevationDegrees} degrees.");
                 break;
         }
+
+        foreach (var test in dto.WeatherTests ?? [])
+        {
+            if (!ScheduleWeatherTest.KnownMetrics.Contains(test.Metric?.Trim(), StringComparer.OrdinalIgnoreCase))
+                errors.Add($"\"{test.Metric}\" isn't a weather test. Use one of: {string.Join(", ", ScheduleWeatherTest.KnownMetrics)}.");
+            if (!ScheduleWeatherTest.KnownOps.Contains(test.Op?.Trim(), StringComparer.OrdinalIgnoreCase))
+                errors.Add("Each weather test must be \"atLeast\" or \"atMost\".");
+            if (double.IsNaN(test.Value) || double.IsInfinity(test.Value))
+                errors.Add("Each weather test needs a number to compare against.");
+        }
+
+        if (dto.WeatherTests is { Count: > 10 }) errors.Add("Ten weather tests is the most one schedule can have.");
 
         switch (dto.ActionType?.ToLowerInvariant())
         {

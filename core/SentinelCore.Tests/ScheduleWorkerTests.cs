@@ -222,6 +222,166 @@ public sealed class ScheduleWorkerTests
         Assert.Equal(ScheduleRun.StatusOk, (await first).Status);
     }
 
+    // --- weather -----------------------------------------------------------------------------
+
+    private static readonly IReadOnlyList<ScheduleWeatherTest> Sprinklers =
+    [
+        new("rainPast", ScheduleWeatherTest.OpAtMost, 0.5, 3),
+        new("rainNext", ScheduleWeatherTest.OpAtMost, 0.1, 1)
+    ];
+
+    [Fact]
+    public async Task AWeatherGatedSchedule_RunsWhenTheWeatherAgrees_AndSaysWhy()
+    {
+        var weather = new FakeScheduleWeather { Verdict = new(true, "0.2 inches of rain in the last 3 days") };
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Daily("Sprinklers", "06:00") with { WeatherTests = Sprinklers }, token);
+        await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+
+        await harness.RunUntilAsync(() => harness.Publisher.Published.Count > 0);
+
+        var run = Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token));
+        Assert.Equal(ScheduleRun.StatusOk, run.Status);
+        Assert.Contains("weather: 0.2 inches of rain in the last 3 days", run.Detail);
+    }
+
+    [Fact]
+    public async Task AWeatherGatedSchedule_IsSkippedWhenATestFails_WithTheMeasurementInTheHistory()
+    {
+        var weather = new FakeScheduleWeather
+        {
+            Verdict = new(false, "1.2 inches of rain in the last 3 days (needs 0.5 inches of rain or less in the last 3 days)")
+        };
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Daily("Sprinklers", "06:00") with { WeatherTests = Sprinklers }, token);
+        await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+
+        await harness.RunUntilAsync(async () => (await harness.Store.GetRunsAsync(schedule.Id, 10, token)).Count > 0);
+
+        Assert.Empty(harness.Publisher.Published);
+        var run = Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token));
+        Assert.Equal(ScheduleRun.StatusSkipped, run.Status);
+        Assert.StartsWith("skipped: 1.2 inches of rain in the last 3 days", run.Detail);
+
+        // Skipped is shown on the row but isn't a run: the count and last-run time stay put.
+        var updated = await harness.Store.GetAsync(schedule.Id, token);
+        Assert.Equal(0, updated!.RunCount);
+        Assert.Null(updated.LastRunUtc);
+        Assert.StartsWith("skipped:", updated.LastDetail);
+    }
+
+    [Fact]
+    public async Task AWeatherGatedSchedule_FailsClosedWhenTheWeatherIsUnavailable()
+    {
+        var weather = new FakeScheduleWeather { Verdict = new(null, "couldn't check the weather: the dashboard didn't answer") };
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Daily("Sprinklers", "06:00") with { WeatherTests = Sprinklers }, token);
+        await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+
+        await harness.RunUntilAsync(async () => (await harness.Store.GetRunsAsync(schedule.Id, 10, token)).Count > 0);
+
+        Assert.Empty(harness.Publisher.Published);
+        var run = Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token));
+        Assert.Equal(ScheduleRun.StatusSkipped, run.Status);
+        Assert.Equal("skipped: couldn't check the weather: the dashboard didn't answer", run.Detail);
+    }
+
+    [Fact]
+    public async Task AScheduleWithoutWeatherTests_NeverAsksForTheWeather()
+    {
+        var weather = new FakeScheduleWeather();
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Daily("Porch light on", "18:00"), token);
+        await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+
+        await harness.RunUntilAsync(() => harness.Publisher.Published.Count > 0);
+        Assert.Equal(0, weather.Calls);
+    }
+
+    [Fact]
+    public async Task AWeatherSchedule_FiresOnTheChangeToTrue_ThenNotAgainUntilItHasClearedAndTheQuietPeriodPassed()
+    {
+        var weather = new FakeScheduleWeather { Verdict = new(true, "a low of 28°F in the next 2 days") };
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Base("Frost cloth") with
+        {
+            Kind = Schedule.KindWeather,
+            WeatherTests = [new("lowNext", ScheduleWeatherTest.OpAtMost, 32, 2)]
+        }, token);
+
+        async Task CheckAsync(int expectedCalls)
+        {
+            await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+            await harness.RunUntilAsync(() => weather.Calls >= expectedCalls);
+        }
+
+        // First check: true for the first time - fires.
+        await CheckAsync(1);
+        Assert.Single(harness.Publisher.Published);
+        var afterFirst = await harness.Store.GetAsync(schedule.Id, token);
+        Assert.True(afterFirst!.WeatherHeld);
+        Assert.NotNull(afterFirst.WeatherFiredAtUtc);
+        Assert.Contains("weather: a low of 28°F", Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token)).Detail);
+        // The next check is on the half-hour grid, not the action's own timing.
+        Assert.True(afterFirst.NextDueUtc > DateTimeOffset.UtcNow);
+        Assert.True(afterFirst.NextDueUtc <= DateTimeOffset.UtcNow.AddMinutes(30));
+
+        // Still true: no second firing.
+        await CheckAsync(2);
+        Assert.Single(harness.Publisher.Published);
+
+        // Clears, then comes back inside the quiet period: still nothing.
+        weather.Verdict = new(false, "a low of 40°F in the next 2 days (needs a low of 32°F or colder in the next 2 days)");
+        await CheckAsync(3);
+        Assert.False((await harness.Store.GetAsync(schedule.Id, token))!.WeatherHeld);
+        weather.Verdict = new(true, "a low of 30°F in the next 2 days");
+        await CheckAsync(4);
+        Assert.Single(harness.Publisher.Published);
+
+        // Ordinary checks record nothing - the history is for firings.
+        Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token));
+
+        // Cleared again with the quiet period long over: the next true fires.
+        await harness.Store.SetWeatherStateAsync(schedule.Id, false, DateTimeOffset.UtcNow.AddHours(-13), token);
+        await CheckAsync(5);
+        Assert.Equal(2, harness.Publisher.Published.Count);
+    }
+
+    [Fact]
+    public async Task AWeatherSchedule_RecordsAnOutageOnce_AndChangesNothing()
+    {
+        var weather = new FakeScheduleWeather { Verdict = new(null, "couldn't check the weather: no location set") };
+        await using var harness = new Harness(weather: weather);
+        var token = TestContext.Current.CancellationToken;
+
+        var schedule = await harness.Store.CreateAsync(Base("Frost cloth") with
+        {
+            Kind = Schedule.KindWeather,
+            WeatherTests = [new("lowNext", ScheduleWeatherTest.OpAtMost, 32, 2)]
+        }, token);
+
+        for (var check = 1; check <= 3; check++)
+        {
+            await harness.Store.SetNextDueAsync(schedule.Id, DateTimeOffset.UtcNow.AddSeconds(-2), token);
+            await harness.RunUntilAsync(() => weather.Calls >= check);
+        }
+
+        Assert.Empty(harness.Publisher.Published);
+        var run = Assert.Single(await harness.Store.GetRunsAsync(schedule.Id, 10, token));
+        Assert.Equal("skipped: couldn't check the weather: no location set", run.Detail);
+        Assert.Null((await harness.Store.GetAsync(schedule.Id, token))!.WeatherHeld);
+    }
+
     // --- helpers -----------------------------------------------------------------------------
 
     private static Schedule Daily(string name, string timeOfDay) =>
@@ -256,7 +416,7 @@ public sealed class ScheduleWorkerTests
         // sun-following schedule has a next firing within the day.
         private static readonly GeoCoordinate DefaultLocation = new(38.2527, -85.7585);
 
-        public Harness(bool mqttEnabled = true, GeoCoordinate? location = null)
+        public Harness(bool mqttEnabled = true, GeoCoordinate? location = null, IScheduleWeather? weather = null)
         {
             location ??= DefaultLocation;
 
@@ -285,7 +445,8 @@ public sealed class ScheduleWorkerTests
                 NullLogger<ScheduleContext>.Instance);
 
             Runner = new ScheduleRunner(Store, dispatcher, NullLogger<ScheduleRunner>.Instance);
-            _worker = new ScheduleWorker(Store, Runner, context, NullLogger<ScheduleWorker>.Instance);
+            _worker = new ScheduleWorker(
+                Store, Runner, context, weather ?? new FakeScheduleWeather(), NullLogger<ScheduleWorker>.Instance);
         }
 
         public SqliteScheduleStore Store { get; }
@@ -368,6 +529,23 @@ public sealed class ScheduleWorkerTests
             }
 
             _published.Enqueue((topic, payload, retain));
+        }
+    }
+
+    // Answers every weather check with whatever the test last set, and counts the checks.
+    internal sealed class FakeScheduleWeather : IScheduleWeather
+    {
+        private int _calls;
+
+        public ScheduleWeatherVerdict Verdict { get; set; } = new(true, "fine weather");
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public Task<ScheduleWeatherVerdict> CheckAsync(
+            IReadOnlyList<ScheduleWeatherTest> tests, TimeZoneInfo zone, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            return Task.FromResult(Verdict);
         }
     }
 

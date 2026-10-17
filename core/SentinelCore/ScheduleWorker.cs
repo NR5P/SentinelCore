@@ -73,8 +73,10 @@ public sealed class ScheduleRunner(
     // would otherwise pile up runs until something gave.
     private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
 
+    // `weather` is what the weather check measured, when one let this run go ahead - added to the
+    // run's detail so the history shows why it ran as well as what it did.
     public async Task<ScheduleRun> ExecuteAsync(
-        Schedule schedule, DateTimeOffset dueAt, CancellationToken cancellationToken)
+        Schedule schedule, DateTimeOffset dueAt, CancellationToken cancellationToken, string? weather = null)
     {
         var firedAt = DateTimeOffset.UtcNow;
 
@@ -97,6 +99,7 @@ public sealed class ScheduleRunner(
             try
             {
                 var detail = await dispatcher.DispatchAsync(schedule.Action, tokens, cancellationToken);
+                if (!string.IsNullOrEmpty(weather)) detail = $"{detail} (weather: {weather})";
                 logger.LogInformation("Schedule {ScheduleName} fired: {Detail}", schedule.Name, detail);
 
                 return await RecordAsync(
@@ -151,6 +154,7 @@ public sealed class ScheduleWorker(
     IScheduleStore store,
     ScheduleRunner runner,
     ScheduleContext context,
+    IScheduleWeather weather,
     ILogger<ScheduleWorker> logger) : BackgroundService
 {
     // Also how long an edit can take to be noticed, which is why it is seconds rather than
@@ -164,6 +168,10 @@ public sealed class ScheduleWorker(
     // what the catch-up rules would then record them as. Tracked rather than abandoned so
     // shutdown can give them a moment to finish.
     private readonly ConcurrentDictionary<Guid, Task> _dispatching = new();
+
+    // Weather schedules whose last check couldn't get the weather, so an outage is recorded in
+    // the history once when it starts rather than every half hour until it ends.
+    private readonly ConcurrentDictionary<Guid, byte> _weatherUnavailable = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -275,6 +283,14 @@ public sealed class ScheduleWorker(
     private async Task HandleDueAsync(
         Schedule schedule, DateTimeOffset dueAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // A check, not a firing: one missed while the server was down is simply made now, so the
+        // catch-up rules don't apply.
+        if (schedule.IsWeatherKind)
+        {
+            Dispatch(schedule, dueAt, ct => CheckWeatherTriggerAsync(schedule, dueAt, ct), cancellationToken);
+            return;
+        }
+
         var decision = ScheduleCatchUp.Decide(schedule, dueAt, now, context.MaximumCatchUp);
 
         if (!decision.Run)
@@ -288,19 +304,86 @@ public sealed class ScheduleWorker(
             return;
         }
 
-        Dispatch(schedule, dueAt, cancellationToken);
+        Dispatch(schedule, dueAt, ct => RunIfWeatherAllowsAsync(schedule, dueAt, ct), cancellationToken);
+    }
+
+    // A timed firing with "only if" weather tests. Checked here, at firing time, rather than
+    // when it was scheduled - "no rain in the last 3 days" means as of 06:00, not as of last
+    // night. Unknown weather skips the run: the safe side of "sprinklers on" is off.
+    private async Task RunIfWeatherAllowsAsync(Schedule schedule, DateTimeOffset dueAt, CancellationToken cancellationToken)
+    {
+        if (schedule.WeatherTests.Count == 0)
+        {
+            await runner.ExecuteAsync(schedule, dueAt, cancellationToken);
+            return;
+        }
+
+        var verdict = await weather.CheckAsync(schedule.WeatherTests, context.TimeZone, cancellationToken);
+        if (verdict.Holds != true)
+        {
+            logger.LogInformation("Schedule {ScheduleName} skipped for the weather: {Detail}", schedule.Name, verdict.Detail);
+            await runner.RecordWithoutRunningAsync(
+                schedule, dueAt, ScheduleRun.StatusSkipped, $"skipped: {verdict.Detail}", cancellationToken);
+            return;
+        }
+
+        await runner.ExecuteAsync(schedule, dueAt, cancellationToken, verdict.Detail);
+    }
+
+    // A "weather" schedule's check: fire when the tests go from not holding to holding, and not
+    // again within the quiet period - the same rule OrganizerAutomationEngine.RunWeatherRulesAsync
+    // applies, so "a freeze is forecast" fires once when it appears rather than every half hour
+    // while it stays in the forecast.
+    private async Task CheckWeatherTriggerAsync(Schedule schedule, DateTimeOffset dueAt, CancellationToken cancellationToken)
+    {
+        var verdict = await weather.CheckAsync(schedule.WeatherTests, context.TimeZone, cancellationToken);
+        if (verdict.Holds is not { } holds)
+        {
+            // No change either way; try again at the next check. Recorded once per outage.
+            if (_weatherUnavailable.TryAdd(schedule.Id, 0))
+                await runner.RecordWithoutRunningAsync(
+                    schedule, dueAt, ScheduleRun.StatusSkipped, $"skipped: {verdict.Detail}", cancellationToken);
+            return;
+        }
+
+        _weatherUnavailable.TryRemove(schedule.Id, out _);
+        var now = DateTimeOffset.UtcNow;
+        var firedAt = schedule.WeatherFiredAtUtc;
+        var quiet = firedAt is { } last && now - last < Schedule.WeatherQuietPeriod;
+
+        if (holds && schedule.WeatherHeld != true && !quiet)
+        {
+            firedAt = now;
+            // Stored before running, so a slow action can't let the next check fire it again. Not
+            // the caller's token, for ScheduleRunner.RecordAsync's reason: once the weather has
+            // been read, a shutdown mid-write mustn't lose what it said.
+            await store.SetWeatherStateAsync(schedule.Id, true, firedAt, CancellationToken.None);
+            await runner.ExecuteAsync(schedule, dueAt, cancellationToken, verdict.Detail);
+            return;
+        }
+
+        await store.SetWeatherStateAsync(schedule.Id, holds, firedAt, CancellationToken.None);
     }
 
     // Started, not awaited - see _dispatching. The task removes itself when it finishes, and
-    // ScheduleRunner already records both success and failure, so nothing here can fault.
-    private void Dispatch(Schedule schedule, DateTimeOffset dueAt, CancellationToken cancellationToken)
+    // ScheduleRunner already records both success and failure; anything else that throws is
+    // logged here so it can't fault silently.
+    private void Dispatch(
+        Schedule schedule, DateTimeOffset dueAt, Func<CancellationToken, Task> work, CancellationToken cancellationToken)
     {
         var key = Guid.NewGuid();
         var task = Task.Run(async () =>
         {
             try
             {
-                await runner.ExecuteAsync(schedule, dueAt, cancellationToken);
+                await work(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "Schedule {ScheduleName} due at {DueAt} hit an error", schedule.Name, dueAt);
+            }
+            catch (OperationCanceledException)
+            {
             }
             finally
             {

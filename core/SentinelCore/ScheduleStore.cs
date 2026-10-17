@@ -24,6 +24,10 @@ public interface IScheduleStore
     // stays visible in the list with its history rather than vanishing.
     Task SetEnabledAsync(Guid id, bool enabled, CancellationToken cancellationToken);
 
+    // A weather schedule's memory between checks - see Schedule.WeatherHeld. Separate from
+    // RecordRunAsync because most checks run nothing and must not add to the history.
+    Task SetWeatherStateAsync(Guid id, bool? held, DateTimeOffset? firedAtUtc, CancellationToken cancellationToken);
+
     // Appends to the history and updates the parent row's summary columns in one go, so a
     // listing never shows a "last run" that disagrees with the history underneath it.
     //
@@ -107,6 +111,29 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
                 ON ScheduleRuns (ScheduleId, FiredAtUtc DESC);
             """;
         command.ExecuteNonQuery();
+
+        // Databases created before the weather columns existed - the same PRAGMA-checked
+        // ALTER TABLE as DeviceStore.
+        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var pragma = _connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA table_info(Schedules);";
+            using var reader = pragma.ExecuteReader();
+            while (reader.Read()) existingColumns.Add(reader.GetString(reader.GetOrdinal("name")));
+        }
+
+        foreach (var (column, definition) in new[]
+                 {
+                     ("WeatherTests", "TEXT NOT NULL DEFAULT '[]'"),
+                     ("WeatherHeld", "INTEGER NULL"),
+                     ("WeatherFiredAtUtc", "TEXT NULL")
+                 })
+        {
+            if (existingColumns.Contains(column)) continue;
+            using var alter = _connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE Schedules ADD COLUMN {column} {definition};";
+            alter.ExecuteNonQuery();
+        }
     }
 
     public Task<IReadOnlyList<Schedule>> GetAllAsync(CancellationToken cancellationToken) =>
@@ -167,14 +194,16 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
                     ActionType, DeviceId, DeviceAction, DeviceBrightness,
                     MqttTopic, MqttPayload, MqttRetain,
                     WebhookUrl, WebhookMethod, WebhookHeaders, WebhookBody, WebhookContentType,
-                    CatchUpPolicy, LastRunUtc, LastStatus, LastDetail, NextDueUtc, RunCount, CreatedAt, UpdatedAt
+                    CatchUpPolicy, LastRunUtc, LastStatus, LastDetail, NextDueUtc, RunCount, CreatedAt, UpdatedAt,
+                    WeatherTests, WeatherHeld, WeatherFiredAtUtc
                 ) VALUES (
                     $id, $name, $enabled, $kind, $timeOfDay, $daysOfWeek, $intervalSeconds, $windowStart, $windowEnd,
                     $cronExpression, $runAtUtc, $solarEvent, $solarOffsetMinutes, $solarElevationDegrees,
                     $actionType, $deviceId, $deviceAction, $deviceBrightness,
                     $mqttTopic, $mqttPayload, $mqttRetain,
                     $webhookUrl, $webhookMethod, $webhookHeaders, $webhookBody, $webhookContentType,
-                    $catchUpPolicy, $lastRunUtc, $lastStatus, $lastDetail, $nextDueUtc, $runCount, $createdAt, $updatedAt
+                    $catchUpPolicy, $lastRunUtc, $lastStatus, $lastDetail, $nextDueUtc, $runCount, $createdAt, $updatedAt,
+                    $weatherTests, $weatherHeld, $weatherFiredAtUtc
                 );
                 """;
             Bind(command, schedule);
@@ -212,6 +241,7 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
                     WebhookUrl = $webhookUrl, WebhookMethod = $webhookMethod, WebhookHeaders = $webhookHeaders,
                     WebhookBody = $webhookBody, WebhookContentType = $webhookContentType,
                     CatchUpPolicy = $catchUpPolicy, NextDueUtc = $nextDueUtc,
+                    WeatherTests = $weatherTests,
                     CreatedAt = $createdAt, UpdatedAt = $updatedAt
                 WHERE Id = $id;
                 """;
@@ -276,6 +306,25 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
             command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.UtcDateTime.ToString("O"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SetWeatherStateAsync(
+        Guid id, bool? held, DateTimeOffset? firedAtUtc, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE Schedules SET WeatherHeld = $held, WeatherFiredAtUtc = $firedAtUtc WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$held", held is { } value ? (value ? 1 : 0) : DBNull.Value);
+            command.Parameters.AddWithValue("$firedAtUtc", ToStorage(firedAtUtc));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -434,6 +483,9 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
         command.Parameters.AddWithValue("$runCount", schedule.RunCount);
         command.Parameters.AddWithValue("$createdAt", schedule.CreatedAt.UtcDateTime.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", schedule.UpdatedAt.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$weatherTests", JsonSerializer.Serialize(schedule.WeatherTests));
+        command.Parameters.AddWithValue("$weatherHeld", schedule.WeatherHeld is { } held ? (held ? 1 : 0) : DBNull.Value);
+        command.Parameters.AddWithValue("$weatherFiredAtUtc", ToStorage(schedule.WeatherFiredAtUtc));
     }
 
     private static object ToStorage(DateTimeOffset? value) =>
@@ -474,7 +526,12 @@ public sealed class SqliteScheduleStore : IScheduleStore, IDisposable
         ReadNullableInstant(reader, "NextDueUtc"),
         reader.GetInt64(reader.GetOrdinal("RunCount")),
         DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("CreatedAt"))),
-        DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("UpdatedAt"))));
+        DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("UpdatedAt"))))
+    {
+        WeatherTests = JsonSerializer.Deserialize<List<ScheduleWeatherTest>>(reader.GetString(reader.GetOrdinal("WeatherTests"))) ?? [],
+        WeatherHeld = ReadNullableInt(reader, "WeatherHeld") is { } held ? held != 0 : null,
+        WeatherFiredAtUtc = ReadNullableInstant(reader, "WeatherFiredAtUtc")
+    };
 
     private static DateTimeOffset? ReadNullableInstant(SqliteDataReader reader, string column)
     {

@@ -740,6 +740,7 @@ app.MapSystemStatusEndpoints();
 app.MapLocalAddressEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
+app.MapScheduleWeatherEndpoints();
 app.MapLocationLookupEndpoints();
 app.MapWeatherEndpoints();
 app.MapKioskEndpoints();

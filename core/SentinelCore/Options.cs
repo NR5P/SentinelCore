@@ -1035,4 +1035,9 @@ public sealed class ScheduleOptions
     // already use. Set it to an IANA id ("America/New_York") when the server's clock is on UTC
     // but the schedules should follow local wall-clock time - common on headless installs.
     public string TimeZone { get; init; } = string.Empty;
+
+    // Where the dashboard (SentinelCore.Web) answers, for schedules with a weather test - the
+    // weather is measured there. Its plain-HTTP LAN port on this same machine by default; change
+    // it only if the dashboard was moved to another port.
+    public string DashboardUrl { get; init; } = "http://127.0.0.1:3320";
 }

@@ -203,6 +203,7 @@ public static class HubBackupEndpoints
         WebhookHeaders = schedule.Action.WebhookHeaders,
         WebhookBody = schedule.Action.WebhookBody,
         WebhookContentType = schedule.Action.WebhookContentType,
-        CatchUpPolicy = schedule.CatchUpPolicy
+        CatchUpPolicy = schedule.CatchUpPolicy,
+        WeatherTests = [.. schedule.WeatherTests]
     };
 }

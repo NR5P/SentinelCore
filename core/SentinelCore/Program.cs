@@ -269,6 +269,8 @@ builder.Services.AddSingleton<IAutomationRuleStore, SqliteAutomationRuleStore>()
 builder.Services.AddSingleton<IScheduleStore, SqliteScheduleStore>();
 builder.Services.AddSingleton<ScheduleContext>();
 builder.Services.AddSingleton<ScheduleRunner>();
+builder.Services.AddHttpClient(DashboardScheduleWeather.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<IScheduleWeather, DashboardScheduleWeather>();
 builder.Services.AddHostedService<ScheduleWorker>();
 
 // Before AlertProcessor so interrupted alerts are already waiting when it starts draining.

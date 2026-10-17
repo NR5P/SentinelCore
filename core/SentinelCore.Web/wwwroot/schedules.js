@@ -16,6 +16,49 @@ window.SentinelSchedules = (function () {
 
   const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+  // The weather tests a schedule can wait for or be held back by - the same measures as the
+  // Organizer's weather automations (WeatherRuleMetrics on the server), with the units, steps
+  // and windows that make sense for each, and a sensible first value.
+  const WEATHER_METRICS = {
+    rainPast: { label: "rain so far", unit: "inches", step: 0.1, past: true, windows: [1, 2, 3, 5, 7, 10, 14], make: { op: "atMost", value: 0.5, window: 3 } },
+    rainNext: { label: "rain forecast", unit: "inches", step: 0.1, windows: [1, 2, 3, 5, 7], make: { op: "atMost", value: 0.1, window: 1 } },
+    snowNext: { label: "snow forecast", unit: "inches", step: 0.5, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 2, window: 3 } },
+    lowNext: { label: "lowest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], make: { op: "atMost", value: 32, window: 2 } },
+    highNext: { label: "highest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 95, window: 3 } },
+    rainChanceNext: { label: "chance of rain", unit: "%", step: 5, windows: [1, 2, 3, 5, 7], make: { op: "atMost", value: 40, window: 1 } },
+    tempNow: { label: "temperature right now", unit: "°F", step: 1, now: true, windows: [1], make: { op: "atMost", value: 32, window: 1 } }
+  };
+
+  // The weather tests in the open form, in the server's shape.
+  let weatherTests = [];
+
+  function weatherSpan(metric, window) {
+    const m = WEATHER_METRICS[metric] || WEATHER_METRICS.rainPast;
+    const n = Number(window) || 1;
+    return m.now ? "" : m.past ? (n === 1 ? " today" : ` in the last ${n} days`) : (n === 1 ? " in the next day" : ` in the next ${n} days`);
+  }
+
+  function weatherWords(test) {
+    const span = weatherSpan(test.metric, test.window);
+    const most = test.op === "atMost";
+    const v = test.value ?? 0;
+    const inches = `${v} inch${v === 1 ? "" : "es"}`;
+    switch (test.metric) {
+      case "rainPast": return `${inches} of rain or ${most ? "less" : "more"} has fallen${span}`;
+      case "rainNext": return `${inches} of rain or ${most ? "less" : "more"} is forecast${span}`;
+      case "snowNext": return `${inches} of snow or ${most ? "less" : "more"} is forecast${span}`;
+      case "lowNext": return most ? `it gets down to ${v}°F or colder${span}` : `it stays at ${v}°F or warmer${span}`;
+      case "highNext": return most ? `it stays at ${v}°F or cooler${span}` : `it gets up to ${v}°F or hotter${span}`;
+      case "rainChanceNext": return most ? `the chance of rain stays at ${v}% or less${span}` : `there's a ${v}% chance of rain or more${span}`;
+      case "tempNow": return `it's ${v}°F or ${most ? "colder" : "warmer"} right now`;
+      default: return "the weather…";
+    }
+  }
+
+  function describeWeather(schedule) {
+    return (schedule.weatherTests || []).map(weatherWords).join(" and ");
+  }
+
   function escapeHtml(value) {
     // Deliberately a string replace rather than the textContent/innerHTML trick this used to be.
     // That trick escapes exactly what a *text node* needs - & < > - and quotes are not among them,
@@ -117,6 +160,12 @@ window.SentinelSchedules = (function () {
         return `once, ${formatLocal(schedule.runAtUtc)}`;
       case "solar":
         return describeSolar(schedule, days);
+      case "weather": {
+        const window = schedule.windowStart && schedule.windowEnd
+          ? ` (checked ${schedule.windowStart}-${schedule.windowEnd})`
+          : "";
+        return `when ${describeWeather(schedule)}${window}`;
+      }
       default:
         return schedule.kind;
     }
@@ -157,7 +206,9 @@ window.SentinelSchedules = (function () {
     if (!schedule.lastStatus) return "never run";
 
     const when = schedule.lastRunUtc ? formatLocal(schedule.lastRunUtc) : "";
-    const detail = schedule.lastDetail ? ` - ${escapeHtml(schedule.lastDetail)}` : "";
+    // A weather skip's detail already starts "skipped: ..." - don't say it twice.
+    const lastDetail = (schedule.lastDetail || "").replace(new RegExp(`^${schedule.lastStatus}: `), "");
+    const detail = lastDetail ? ` - ${escapeHtml(lastDetail)}` : "";
     return `last: ${escapeHtml(schedule.lastStatus)}${when ? ` ${when}` : ""}${detail}`;
   }
 
@@ -174,12 +225,16 @@ window.SentinelSchedules = (function () {
     const next = needsLocation
       ? "no location set - add your town under Settings"
       : schedule.nextDueUtc
-        ? `next: ${formatLocal(schedule.nextDueUtc)}`
+        ? `${schedule.kind === "weather" ? "next weather check" : "next"}: ${formatLocal(schedule.nextDueUtc)}`
         : schedule.enabled ? "no upcoming run" : "";
+    const onlyIf = schedule.kind !== "weather" && (schedule.weatherTests || []).length > 0
+      ? `<span class="camera-card-meta">only if ${escapeHtml(describeWeather(schedule))}</span>`
+      : "";
 
     info.innerHTML = `
       <span class="camera-card-name">${escapeHtml(schedule.name)}${schedule.enabled ? "" : " (disabled)"}</span>
       <span class="camera-card-meta">${escapeHtml(describeTiming(schedule))} &middot; ${describeAction(schedule)}</span>
+      ${onlyIf}
       <span class="camera-card-meta">${escapeHtml(next)}</span>
       <span class="camera-card-meta">${describeLastRun(schedule)}</span>
       <span class="camera-card-meta" id="schedule-status-${schedule.id}"></span>
@@ -343,10 +398,13 @@ window.SentinelSchedules = (function () {
     fields.appendChild(buildKindField(schedule?.kind ?? "daily"));
     fields.appendChild(buildDailyFields(schedule));
     fields.appendChild(buildIntervalFields(schedule));
+    fields.appendChild(buildWindowFields(schedule));
     fields.appendChild(buildCronFields(schedule));
     fields.appendChild(buildOnceFields(schedule));
     fields.appendChild(buildSolarFields(schedule));
     fields.appendChild(buildDaysField(schedule?.daysOfWeek ?? []));
+    weatherTests = (schedule?.weatherTests || []).map(test => ({ ...test }));
+    fields.appendChild(buildWeatherFields());
 
     fields.appendChild(buildActionTypeField(schedule?.action?.type ?? "device"));
     fields.appendChild(buildDeviceFields(schedule));
@@ -472,6 +530,7 @@ window.SentinelSchedules = (function () {
       { value: "solar", label: "At sunset / sunrise, or when it gets dark" },
       { value: "interval", label: "Every so often" },
       { value: "once", label: "Once, at a specific date and time" },
+      { value: "weather", label: "When the weather turns (frost forecast, a heatwave…)" },
       { value: "cron", label: "On a cron expression (advanced)" }
     ], value, "How this schedule decides when to fire.");
     row.querySelector("select").addEventListener("change", e => {
@@ -505,6 +564,12 @@ window.SentinelSchedules = (function () {
       { value: "hours", label: "hours" }
     ], useHours ? "hours" : "minutes", "Whether the number above is minutes or hours.");
 
+    return group("sch-interval-fields", [amount, unit]);
+  }
+
+  // Shared by "every so often" and "when the weather turns", which both check on a repeating
+  // grid and both want a way to keep it to part of the day.
+  function buildWindowFields(schedule) {
     const start = fieldRow("Optional. Confines the firings to part of the day, so 'every 15 minutes' doesn't also mean every 15 minutes at 3am. Leave both empty to run all day.", false);
     start.innerHTML = `<label class="field-label" for="sch-window-start">Only between</label>`;
     const startInput = document.createElement("input");
@@ -523,7 +588,109 @@ window.SentinelSchedules = (function () {
     endInput.value = schedule?.windowEnd || "";
     end.appendChild(endInput);
 
-    return group("sch-interval-fields", [amount, unit, start, end]);
+    return group("sch-window-fields", [start, end]);
+  }
+
+  function buildWeatherFields() {
+    const row = fieldRow(null, true);
+    row.id = "sch-weather-row";
+    row.innerHTML = `
+      <label class="field-label" id="sch-weather-heading"></label>
+      <div id="sch-weather-tests"></div>
+      <div class="camera-card-meta" id="sch-weather-note" style="white-space:normal;"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+        <button type="button" class="btn" id="sch-weather-add">+ weather test</button>
+        <button type="button" class="btn" id="sch-weather-check">check the weather now</button>
+      </div>
+      <div class="camera-card-meta" id="sch-weather-check-result" style="white-space:normal;"></div>`;
+    row.querySelector("#sch-weather-add").addEventListener("click", () => {
+      const metric = weatherTests.length === 0 ? "rainPast" : "rainNext";
+      weatherTests.push({ metric, ...WEATHER_METRICS[metric].make });
+      renderWeatherTests();
+      schedulePreview();
+    });
+    row.querySelector("#sch-weather-check").addEventListener("click", checkWeatherNow);
+    return row;
+  }
+
+  function renderWeatherTests() {
+    const kind = el("sch-kind")?.value;
+    const heading = el("sch-weather-heading");
+    const note = el("sch-weather-note");
+    const list = el("sch-weather-tests");
+    if (!heading || !list) return;
+
+    const trigger = kind === "weather";
+    heading.textContent = trigger
+      ? "Fire when all of these become true"
+      : "Only if the weather agrees (optional - all must hold at firing time)";
+    note.textContent = trigger
+      ? `Checked every ${metadata.weatherCheckMinutes || 30} minutes. Fires once when they all come true, then waits until they stop being true - and at least ${metadata.weatherQuietHours || 12} hours - before it can fire again.`
+      : weatherTests.length === 0
+        ? "e.g. sprinklers at 6am only if there's been half an inch of rain or less in the last 3 days. If the weather can't be had, the run is skipped and the history says why."
+        : "Checked at the moment it's due. If any test fails - or the weather can't be had - this run is skipped, and the history says why.";
+    el("sch-weather-check-result").textContent = "";
+
+    list.innerHTML = "";
+    weatherTests.forEach((test, index) => {
+      const m = WEATHER_METRICS[test.metric] || WEATHER_METRICS.rainPast;
+      const line = document.createElement("div");
+      line.className = "camera-card-meta";
+      line.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;white-space:normal;";
+      const windows = m.windows.map(n =>
+        `<option value="${n}"${Number(test.window) === n ? " selected" : ""}>${m.past ? (n === 1 ? "today" : `the last ${n} days`) : (n === 1 ? "the next day" : `the next ${n} days`)}</option>`).join("");
+      line.innerHTML = `
+        the <select class="field-input" data-w="metric" style="width:auto;">${Object.entries(WEATHER_METRICS).map(([key, d]) =>
+          `<option value="${key}"${key === test.metric ? " selected" : ""}>${escapeHtml(d.label)}</option>`).join("")}</select>
+        ${m.now ? "" : `over <select class="field-input" data-w="window" style="width:auto;">${windows}</select>`}
+        is <select class="field-input" data-w="op" style="width:auto;">
+          <option value="atLeast"${test.op !== "atMost" ? " selected" : ""}>at least</option>
+          <option value="atMost"${test.op === "atMost" ? " selected" : ""}>at most</option>
+        </select>
+        <input type="number" class="field-input" data-w="value" step="${m.step}" value="${escapeHtml(test.value ?? "")}" style="width:90px;" /> ${escapeHtml(m.unit)}
+        <button type="button" class="btn" data-w="remove" title="Remove this test">✕</button>`;
+
+      line.querySelector('[data-w="metric"]').addEventListener("change", e => {
+        weatherTests[index] = { metric: e.target.value, ...WEATHER_METRICS[e.target.value].make };
+        renderWeatherTests();
+        schedulePreview();
+      });
+      line.querySelector('[data-w="window"]')?.addEventListener("change", e => { test.window = Number(e.target.value); });
+      line.querySelector('[data-w="op"]').addEventListener("change", e => { test.op = e.target.value; });
+      line.querySelector('[data-w="value"]').addEventListener("input", e => { test.value = Number(e.target.value); });
+      line.querySelector('[data-w="remove"]').addEventListener("click", () => {
+        weatherTests.splice(index, 1);
+        renderWeatherTests();
+        schedulePreview();
+      });
+      list.appendChild(line);
+    });
+  }
+
+  // What each test measures right now, so it can be checked against the real weather before saving.
+  async function checkWeatherNow() {
+    const target = el("sch-weather-check-result");
+    if (weatherTests.length === 0) {
+      target.textContent = "Add a weather test first.";
+      return;
+    }
+    target.textContent = "checking…";
+    try {
+      const response = await fetch("/api/schedules/weather-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tests: weatherTests, timeZone: metadata.timeZone || "" })
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      target.innerHTML = (payload.results || []).map(result =>
+        result.holds === null || result.holds === undefined
+          ? `<div>? ${escapeHtml(result.wanted)} - couldn't tell: ${escapeHtml(result.problem || "no weather")}</div>`
+          : `<div>${result.holds ? "✓" : "✗"} ${escapeHtml(result.observed)} (wants ${escapeHtml(result.wanted)})</div>`
+      ).join("");
+    } catch {
+      target.textContent = "Couldn't check the weather.";
+    }
   }
 
   function buildCronFields(schedule) {
@@ -728,6 +895,7 @@ window.SentinelSchedules = (function () {
 
     show("sch-daily-fields", kind === "daily");
     show("sch-interval-fields", kind === "interval");
+    show("sch-window-fields", kind === "interval" || kind === "weather");
     show("sch-cron-fields", kind === "cron");
     show("sch-once-fields", kind === "once");
     show("sch-solar-fields", kind === "solar");
@@ -736,7 +904,12 @@ window.SentinelSchedules = (function () {
     const daysRow = el("sch-days-row");
     if (daysRow) daysRow.style.display = kind === "daily" || kind === "solar" ? "" : "none";
 
+    // A weather check that was missed is simply made late, so there's nothing to catch up.
+    const catchUpRow = el("sch-catchup")?.closest(".field-row");
+    if (catchUpRow) catchUpRow.style.display = kind === "weather" ? "none" : "";
+
     if (kind === "solar") applySolarVisibility();
+    renderWeatherTests();
   }
 
   function applySolarVisibility() {
@@ -811,7 +984,8 @@ window.SentinelSchedules = (function () {
       }
 
       const times = payload.occurrences.map(o => o.local).join("  •  ");
-      target.textContent = `${payload.explanation}  Next: ${times}`;
+      const label = el("sch-kind")?.value === "weather" ? "Next checks" : "Next";
+      target.textContent = `${payload.explanation}  ${label}: ${times}`;
     } catch {
       target.textContent = "";
     }
@@ -865,7 +1039,13 @@ window.SentinelSchedules = (function () {
       webhookHeaders: el("sch-webhook-headers")?.value ?? "",
       webhookBody: el("sch-webhook-body")?.value ?? "",
       webhookContentType: el("sch-webhook-content-type")?.value.trim() || "application/json",
-      catchUpPolicy: el("sch-catchup").value
+      catchUpPolicy: el("sch-catchup").value,
+      weatherTests: weatherTests.map(test => ({
+        metric: test.metric,
+        op: test.op === "atMost" ? "atMost" : "atLeast",
+        value: Number(test.value) || 0,
+        window: Number(test.window) || 1
+      }))
     };
   }
 

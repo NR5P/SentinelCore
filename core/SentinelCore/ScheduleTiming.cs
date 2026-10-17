@@ -31,6 +31,11 @@ public static class ScheduleTiming
             Schedule.KindCron => NextCron(schedule, after, zone),
             Schedule.KindOnce => schedule.RunAtUtc > after ? schedule.RunAtUtc : null,
             Schedule.KindSolar => NextSolar(schedule, after, zone, location),
+            // A weather schedule's "firing" is a check, on an interval grid of its own and inside
+            // its window if it has one; whether a check actually runs the action is the worker's
+            // call, once it has the weather.
+            Schedule.KindWeather => NextInterval(
+                schedule with { IntervalSeconds = Schedule.WeatherCheckSeconds }, after, zone),
             _ => null
         };
 

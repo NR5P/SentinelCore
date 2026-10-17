@@ -136,10 +136,7 @@ public static class WeatherRuleMetrics
     // "a low of 32°F or colder in the next 7 days" - for run logs and rule summaries.
     public static string Describe(BoardAutomationCondition condition)
     {
-        var n = WindowOf(condition);
-        var span = condition.Metric == RainPast
-            ? (n == 1 ? "today" : $"in the last {n} days")
-            : (n == 1 ? "in the next day" : $"in the next {n} days");
+        var span = Span(condition);
         var value = condition.Value ?? 0;
         var most = condition.Op == "atMost";
         var amount = most ? "or less" : "or more";
@@ -154,6 +151,33 @@ public static class WeatherRuleMetrics
             TempNow => $"{value:0}°F {(most ? "or colder" : "or warmer")} right now",
             _ => condition.Metric ?? "weather",
         };
+    }
+
+    // What was actually measured, in the same shape as Describe: "1.2 inches of rain in the last
+    // 3 days", "a low of 28°F in the next 7 days" - for a schedule's "skipped: ..." history line.
+    public static string Observed(BoardAutomationCondition condition, WeatherMeasure measure)
+    {
+        if (measure.Value is null) return measure.Problem ?? "nothing to measure";
+        var span = Span(condition);
+        return condition.Metric switch
+        {
+            RainPast => $"{measure.Words} of rain {span}",
+            RainNext => $"{measure.Words} of rain forecast {span}",
+            SnowNext => $"{measure.Words} of snow forecast {span}",
+            LowNext => $"a low of {measure.Words} {span}",
+            HighNext => $"a high of {measure.Words} {span}",
+            RainChanceNext => $"a {measure.Words} chance of rain {span}",
+            TempNow => $"{measure.Words} right now",
+            _ => measure.Words,
+        };
+    }
+
+    private static string Span(BoardAutomationCondition condition)
+    {
+        var n = WindowOf(condition);
+        return condition.Metric == RainPast
+            ? (n == 1 ? "today" : $"in the last {n} days")
+            : (n == 1 ? "in the next day" : $"in the next {n} days");
     }
 
     public static string Inches(double value) =>
