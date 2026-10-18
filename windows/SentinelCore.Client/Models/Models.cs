@@ -714,11 +714,14 @@ public sealed class HomeKitStatus
     public string? Error { get; init; }
 }
 
-// The four editable HomeKit settings. Hand-written rather than schema-driven because the useful
+// The editable HomeKit settings. Every field the server's DTO has must be here: the save merges
+// the whole DTO, so one left out is written back as false. Hand-written rather than schema-driven because the useful
 // half of this section is the pairing code, which no schema can describe.
 public sealed class HomeKitSettings
 {
     public bool Enabled { get; set; }
+    public bool IncludeDevices { get; set; }
+    public bool IncludeVideo { get; set; }
     public string SidecarBaseUrl { get; set; } = "http://127.0.0.1:3321";
     public int TimeoutSeconds { get; set; } = 10;
     public double MinimumConfidence { get; set; } = 0.6;

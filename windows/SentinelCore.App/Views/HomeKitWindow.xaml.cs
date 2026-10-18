@@ -26,6 +26,8 @@ public partial class HomeKitWindow : Window
         {
             var settings = await _model.Client.HomeKitSettingsAsync();
             EnabledToggle.IsChecked = settings.Enabled;
+            IncludeDevicesToggle.IsChecked = settings.IncludeDevices;
+            IncludeVideoToggle.IsChecked = settings.IncludeVideo;
             SidecarBox.Text = settings.SidecarBaseUrl;
             TimeoutBox.Text = settings.TimeoutSeconds.ToString(CultureInfo.InvariantCulture);
             ConfidenceBox.Text = settings.MinimumConfidence.ToString(CultureInfo.InvariantCulture);
@@ -97,6 +99,8 @@ public partial class HomeKitWindow : Window
             await _model.Client.SaveHomeKitSettingsAsync(new HomeKitSettings
             {
                 Enabled = EnabledToggle.IsChecked == true,
+                IncludeDevices = IncludeDevicesToggle.IsChecked == true,
+                IncludeVideo = IncludeVideoToggle.IsChecked == true,
                 SidecarBaseUrl = SidecarBox.Text.Trim(),
                 TimeoutSeconds = timeout,
                 MinimumConfidence = confidence,

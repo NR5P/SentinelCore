@@ -120,8 +120,7 @@ fun HomeKitAdminScreen(
                         current?.error?.let { Text(it, color = SentinelRed, style = MaterialTheme.typography.bodySmall) }
                         Text(
                             "Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events " +
-                                "become native iPhone notifications. Turn on live video in the dashboard's HomeKit " +
-                                "settings to watch the cameras in Home too. Nothing is put on your network " +
+                                "become native iPhone notifications. Nothing is put on your network " +
                                 "until this is turned on.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -168,6 +167,35 @@ fun HomeKitAdminScreen(
                                 Switch(
                                     checked = current.enabled,
                                     onCheckedChange = { settings = current.copy(enabled = it) },
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Include Device Hub")
+                                    Text(
+                                        "Your Device Hub lights, switches, outlets, fans, locks and gates appear in Home too.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = current.includeDevices,
+                                    onCheckedChange = { settings = current.copy(includeDevices = it) },
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Live video in Home")
+                                    Text(
+                                        "Each camera becomes a HomeKit camera you can watch live in Home. Watching away " +
+                                            "from home needs a home hub (an Apple TV or HomePod).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = current.includeVideo,
+                                    onCheckedChange = { settings = current.copy(includeVideo = it) },
                                 )
                             }
                             OutlinedTextField(

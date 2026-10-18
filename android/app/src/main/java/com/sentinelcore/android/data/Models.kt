@@ -683,10 +683,13 @@ data class HomeKitStatus(
     val error: String? = null,
 )
 
-// The four editable HomeKit settings. Hand-written rather than schema-driven because the useful
-// half of that section is the pairing code, which no schema can describe.
+// The editable HomeKit settings. Hand-written rather than schema-driven because the useful
+// half of that section is the pairing code, which no schema can describe. Every field the
+// server's DTO has must be here: the save merges the whole DTO, so one left out is written as false.
 data class HomeKitSettings(
     val enabled: Boolean,
+    val includeDevices: Boolean,
+    val includeVideo: Boolean,
     val sidecarBaseUrl: String,
     val timeoutSeconds: Int,
     val minimumConfidence: Double,

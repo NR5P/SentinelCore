@@ -448,6 +448,8 @@ public sealed partial class SentinelClient : IDisposable
         return new HomeKitSettings
         {
             Enabled = fields.TryGetValue("enabled", out var enabled) && enabled.AsBool,
+            IncludeDevices = fields.TryGetValue("includeDevices", out var devices) && devices.AsBool,
+            IncludeVideo = fields.TryGetValue("includeVideo", out var video) && video.AsBool,
             SidecarBaseUrl = fields.TryGetValue("sidecarBaseUrl", out var url) && url.DisplayString.Length > 0
                 ? url.DisplayString
                 : "http://127.0.0.1:3321",

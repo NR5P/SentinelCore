@@ -395,6 +395,23 @@ public class SentinelClientTests
         Assert.Equal("http://127.0.0.1:3321", settings.SidecarBaseUrl);
         Assert.Equal(10, settings.TimeoutSeconds);
         Assert.Equal(0.6, settings.MinimumConfidence);
+        Assert.False(settings.IncludeDevices);
+        Assert.False(settings.IncludeVideo);
+    }
+
+    // The save merges the whole DTO on the server, so a switch the client never read back would be
+    // written as false - turning off the Device Hub or live video by saving an unrelated field.
+    [Fact]
+    public async Task HomeKit_settings_read_both_include_switches()
+    {
+        using var server = new FakeServer().OnGet("/api/settings",
+            "{\"homeKit\":{\"enabled\":true,\"includeDevices\":true,\"includeVideo\":true}}");
+        using var client = ClientFor(server);
+
+        var settings = await client.HomeKitSettingsAsync();
+
+        Assert.True(settings.IncludeDevices);
+        Assert.True(settings.IncludeVideo);
     }
 
     [Fact]

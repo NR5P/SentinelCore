@@ -781,6 +781,8 @@ class SentinelRepository(
         val section = JSONObject(request("/api/settings")).optJSONObject("homeKit") ?: JSONObject()
         HomeKitSettings(
             enabled = section.optBoolean("enabled"),
+            includeDevices = section.optBoolean("includeDevices"),
+            includeVideo = section.optBoolean("includeVideo"),
             sidecarBaseUrl = section.optString("sidecarBaseUrl").ifEmpty { "http://127.0.0.1:3321" },
             timeoutSeconds = if (section.has("timeoutSeconds")) section.optInt("timeoutSeconds") else 10,
             minimumConfidence = if (section.has("minimumConfidence")) section.optDouble("minimumConfidence") else 0.6,
@@ -790,6 +792,8 @@ class SentinelRepository(
     suspend fun saveHomeKitSettings(settings: HomeKitSettings): Unit = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("enabled", settings.enabled)
+            .put("includeDevices", settings.includeDevices)
+            .put("includeVideo", settings.includeVideo)
             .put("sidecarBaseUrl", settings.sidecarBaseUrl)
             .put("timeoutSeconds", settings.timeoutSeconds)
             .put("minimumConfidence", settings.minimumConfidence)

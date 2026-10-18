@@ -446,11 +446,13 @@ final class SentinelClient {
         let snapshot: [String: SettingsValue] = try await get("/api/settings")
         guard case .object(let fields)? = snapshot["homeKit"] else {
             return HomeKitSettings(
-                enabled: false, sidecarBaseUrl: "http://127.0.0.1:3321",
-                timeoutSeconds: 10, minimumConfidence: 0.6)
+                enabled: false, includeDevices: false, includeVideo: false,
+                sidecarBaseUrl: "http://127.0.0.1:3321", timeoutSeconds: 10, minimumConfidence: 0.6)
         }
         return HomeKitSettings(
             enabled: fields["enabled"]?.boolValue ?? false,
+            includeDevices: fields["includeDevices"]?.boolValue ?? false,
+            includeVideo: fields["includeVideo"]?.boolValue ?? false,
             sidecarBaseUrl: fields["sidecarBaseUrl"]?.displayString ?? "http://127.0.0.1:3321",
             timeoutSeconds: Int(Double(fields["timeoutSeconds"]?.displayString ?? "") ?? 10),
             minimumConfidence: Double(fields["minimumConfidence"]?.displayString ?? "") ?? 0.6)

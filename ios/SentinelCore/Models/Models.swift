@@ -802,11 +802,14 @@ struct HomeKitStatus: Decodable {
     var error: String?
 }
 
-// The four editable HomeKit settings. Hand-written rather than schema-driven because the useful
+// The editable HomeKit settings. Hand-written rather than schema-driven because the useful
 // half of this section is the pairing code, which no schema can describe - see the note on
-// HomeKitSettingsDto in SettingsSchemaTests.
+// HomeKitSettingsDto in SettingsSchemaTests. Every field the server's DTO has must be here: the
+// save merges the whole DTO, so a field left out is written back as false.
 struct HomeKitSettings: Codable {
     var enabled: Bool
+    var includeDevices: Bool
+    var includeVideo: Bool
     var sidecarBaseUrl: String
     var timeoutSeconds: Int
     var minimumConfidence: Double

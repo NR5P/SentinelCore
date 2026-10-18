@@ -40,7 +40,7 @@ struct HomeKitAdminView: View {
             } header: {
                 Text("Status")
             } footer: {
-                Text("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Turn on live video in the dashboard's HomeKit settings to watch the cameras in Home too. Nothing is put on your network until this is turned on.")
+                Text("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Nothing is put on your network until this is turned on.")
             }
 
             // Only worth showing when there's something to pair with: an unpublished sidecar has
@@ -64,6 +64,20 @@ struct HomeKitAdminView: View {
                     Toggle("Enabled", isOn: Binding(
                         get: { current.enabled },
                         set: { settings?.enabled = $0 }))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Include Device Hub", isOn: Binding(
+                            get: { current.includeDevices },
+                            set: { settings?.includeDevices = $0 }))
+                        Text("Your Device Hub lights, switches, outlets, fans, locks and gates appear in Home too.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Live Video in Home", isOn: Binding(
+                            get: { current.includeVideo },
+                            set: { settings?.includeVideo = $0 }))
+                        Text("Each camera becomes a HomeKit camera you can watch live in Home. Watching away from home needs a home hub (an Apple TV or HomePod).")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     SentinelTextField(
                         label: "Sidecar Address",
                         prompt: "http://127.0.0.1:3321",
