@@ -112,6 +112,32 @@ class AudioRuntime private constructor(context: Context) {
         }
     }
 
+    // The repository with its address worked out - for callers outside the audio API (the
+    // Android Auto car app) that can start cold with no Activity behind them.
+    suspend fun readyRepository(): SentinelRepository {
+        ensureAddress()
+        return repository
+    }
+
+    // "Hey Google, play Rumours on Sentinel Core" from the phone (MEDIA_PLAY_FROM_SEARCH on
+    // MainActivity). Android Auto sends the same request through the session instead; both end
+    // in AutoBrowse.resolvePlay. An empty query means "just play something": shuffle all.
+    fun playFromSearch(query: String) {
+        scope.launch {
+            runCatching {
+                val request = if (query.isBlank()) {
+                    AutoBrowse.PlayRequest(api.shuffleAll().map(AudioItem::of), 0, 0.0, PlayContext("queue", null, "Shuffle all"))
+                } else {
+                    val item = androidx.media3.common.MediaItem.Builder()
+                        .setRequestMetadata(androidx.media3.common.MediaItem.RequestMetadata.Builder().setSearchQuery(query).build())
+                        .build()
+                    AutoBrowse.resolvePlay(this@AudioRuntime, item)
+                }
+                request?.let { engine.play(it.items, it.startIndex, it.startSeconds, it.context, shuffle = false) }
+            }.onFailure { Log.d(AudioApi.TAG, "Play from search failed: ${it.message}") }
+        }
+    }
+
     // Absolute URL and session headers for the player, downloads and artwork.
     fun absoluteUrl(path: String): String? =
         if (path.startsWith("http://", true) || path.startsWith("https://", true)) path else repository.absoluteUrl(path)

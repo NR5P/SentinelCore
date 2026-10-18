@@ -25,4 +25,6 @@
     <string name="share_note_label">Sentinel Core note</string>
     <!-- Music & Podcasts: the media notification's channel. -->
     <string name="audio_channel_name">Now playing</string>
+    <!-- Android Auto's IoT car app, next to the music app in the car's launcher. -->
+    <string name="car_app_label">Sentinel Home</string>
 </resources>

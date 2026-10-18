@@ -38,7 +38,10 @@ class MainActivity : ComponentActivity() {
         handlePushIntent(intent)
         // Only on a fresh start: a rotation recreates the activity with the same intent, and a
         // voice reminder must not be added twice.
-        if (savedInstanceState == null) handleVoiceIntent(intent)
+        if (savedInstanceState == null) {
+            handleVoiceIntent(intent)
+            handleMediaSearch(intent)
+        }
         setContent {
             SentinelTheme {
                 val model: SentinelViewModel = viewModel()
@@ -52,6 +55,14 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handlePushIntent(intent)
         handleVoiceIntent(intent)
+        handleMediaSearch(intent)
+    }
+
+    // "Play Rumours on Sentinel Core" - the voice search every media app must accept.
+    private fun handleMediaSearch(intent: Intent?) {
+        if (intent?.action != android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+        com.sentinelcore.android.audio.AudioRuntime.get(this)
+            .playFromSearch(intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty())
     }
 
     // "Voice reminder", "Voice note" or the Assistant - see organizer/VoiceCapture.

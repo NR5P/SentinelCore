@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android Auto: this app is a media app (audio/AudioPlaybackService, audio/AutoBrowse). -->
+<!-- Android Auto: this app is a media app (audio/AudioPlaybackService, audio/AutoBrowse) and an
+     IoT templated app (car/SentinelCarAppService) for the alarm, devices, scenes and alerts. -->
 <automotiveApp>
     <uses name="media" />
+    <uses name="template" />
 </automotiveApp>

@@ -35,7 +35,9 @@ final class PushNotificationCoordinator {
                 identifier: "SECURITY_EVENT",
                 actions: [viewAction],
                 intentIdentifiers: [],
-                options: []
+                // Security alerts show on the CarPlay screen too (once the CarPlay entitlement
+                // is granted; until then the option is ignored).
+                options: [.allowInCarPlay]
             )
         ])
     }

@@ -119,6 +119,10 @@ dependencies {
     implementation("androidx.media3:media3-session:1.5.1")
     // The session's callbacks answer with ListenableFutures; this turns a coroutine into one.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
+    // Android Auto's IoT category (car/): the alarm, Device Hub switches, scenes and recent alerts
+    // on the car screen. Music already reaches the car through the MediaLibraryService above.
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-projected:1.7.0")
 
     // Using this phone as one of the dashboard's cameras: its video is pushed to the server over
     // WebRTC, the same way the web dashboard's publish page does it. See DevicePublisher.

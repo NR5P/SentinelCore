@@ -68,6 +68,21 @@
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
 
+        <!-- Android Auto's IoT category: alarm, devices, scenes and alerts on the car screen. -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="1" />
+
+        <service
+            android:name=".car.SentinelCarAppService"
+            android:exported="true"
+            android:label="@string/car_app_label">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.IOT" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".push.SentinelFirebaseMessagingService"
             android:exported="false">
@@ -176,6 +191,11 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- "Play Rumours on Sentinel Core" (Google Assistant / Android Auto voice). -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <!-- Voice reminder / voice note on the icon's long-press menu, and the Google
                  Assistant App Action - see res/xml/shortcuts.xml. -->

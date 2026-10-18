@@ -12,6 +12,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.sentinelcore.android.MainActivity
 import com.sentinelcore.android.R
+import com.sentinelcore.android.car.SentinelCarSession
 import com.sentinelcore.android.widgets.OrganizerBackgroundSync
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -144,6 +145,9 @@ class SentinelFirebaseMessagingService : FirebaseMessagingService() {
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
+                // Android Auto shows a templated app's notification only when it carries this;
+                // tapping it there opens the car app's Alerts (or Alarm) screen, not the phone.
+                .extend(SentinelCarSession.carExtender(context, alarm))
                 .build()
 
             try {

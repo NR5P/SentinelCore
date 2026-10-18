@@ -131,5 +131,30 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- CarPlay (SentinelCore/CarPlay/CarPlaySceneDelegate.swift). Only the CarPlay scene is
+	     declared; SwiftUI's WindowGroup still supplies the phone's own window. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>CPTemplateApplicationScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>CarPlay</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<!-- CarPlay's Home and Alerts tabs need the Driving Task entitlement. If Apple grants only
+	     Audio, set this to false so CarPlay shows Music and Podcasts only. -->
+	<key>SentinelCarPlayControls</key>
+	<true/>
 </dict>
 </plist>

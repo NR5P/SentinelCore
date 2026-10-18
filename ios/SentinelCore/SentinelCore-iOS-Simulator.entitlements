@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>aps-environment</key>
+    <string>$(APS_ENVIRONMENT)</string>
+    <!-- Shared with the widget extension: the app writes the Organizer snapshot the home-screen
+         widgets read, and picks up reminders checked off on them. See OrganizerWidgetStore. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.sentinelcore.client</string>
+    </array>
+    <!-- CarPlay. Simulator only until Apple grants these to the App ID: a device build with an
+         entitlement its provisioning profile lacks won't sign. Once granted, copy both keys into
+         SentinelCore-iOS.entitlements (docs/CARPLAY_ENTITLEMENT_REQUEST.md). -->
+    <key>com.apple.developer.carplay-audio</key>
+    <true/>
+    <key>com.apple.developer.carplay-driving-task</key>
+    <true/>
+</dict>
+</plist>
