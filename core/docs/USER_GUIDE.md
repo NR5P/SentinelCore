@@ -2686,9 +2686,34 @@ camera's own motion sensor trips too, and Home puts a snapshot in the notificati
 motion-sensor tiles stay as they were, so automations built on them keep working; if you get two
 notifications for one event, turn notifications off on the old sensor tile.
 
-Watching from outside the house needs a **home hub**, an Apple TV or HomePod that is signed in to
-your home and shows as **Connected** under Home Settings → Home Hubs & Bridges. Audio is sent
-when the camera has audio turned on; two-way talk isn't supported.
+Audio is sent when the camera has audio turned on; two-way talk isn't supported.
+
+If you just turned **live video in home** on and no cameras appear, reload the dashboard
+(Cmd+Shift+R / Ctrl+Shift+R) and save the setting again. A browser still holding the settings
+page from before an update doesn't know about the checkbox, so the save quietly leaves it off.
+
+**Using Home away from home (setting up a home hub).** On your home Wi‑Fi, Home talks to the
+Sentinel Core bridge directly. Away from home — on cellular, at work — it can only reach the
+bridge through a **home hub**: an Apple TV or HomePod that stays in the house and relays for you.
+Without one, cameras, sensors and Device Hub devices all show **No Response** as soon as you leave
+Wi‑Fi, and motion notifications stop. Nothing in Sentinel Core can stand in for the hub; it's an
+Apple requirement for every HomeKit accessory.
+
+To check, open Home on your iPhone → **⋯** → **Home Settings → Home Hubs & Bridges**. You should
+see a **Home Hubs** section above **Bridges**, with your Apple TV or HomePod marked **Connected**.
+If the page shows only **Bridges**, your home has no hub. To make an Apple TV the hub:
+
+1. On the Apple TV, open **Settings → Users and Accounts** and check it's signed in to iCloud
+   with the same Apple ID that owns the home in your iPhone's Home app.
+2. Open **Settings → AirPlay and Apple Home**. Under **Apple Home**, **Room** must name a room,
+   shown as *Living Room (Home)* — room, then home. **"Select a Room"** means the Apple TV isn't
+   in any home, which is the usual reason it isn't acting as a hub: choose a room. If no rooms are
+   offered, go back to step 1.
+3. Wait a minute (or restart it from **Settings → System → Restart**), then check
+   **Home Hubs & Bridges** on the iPhone again.
+
+Choosing a room for the *bridge* in the Home app on the iPhone doesn't do this; the room has to
+be picked on the Apple TV itself. To test, turn Wi‑Fi off on the iPhone and open a camera.
 
 **What triggers a notification.** Only events that would also have alerted Email/Telegram —
 the same judgement described in
