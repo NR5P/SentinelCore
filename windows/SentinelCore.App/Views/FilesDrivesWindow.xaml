@@ -27,6 +27,26 @@
                     </StackPanel>
                 </Border>
 
+                <Border x:Name="ProblemBanner" Background="#2A2210" BorderBrush="{StaticResource Amber}" BorderThickness="1"
+                        CornerRadius="6" Padding="14,10" Margin="0,0,0,14" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="The library's computer can't be reached" FontWeight="SemiBold"
+                                   Foreground="{StaticResource Amber}" />
+                        <TextBlock x:Name="ProblemText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="LIBRARY LOCATION" Style="{StaticResource GroupHeading}" />
+                        <TextBlock x:Name="LocationKindText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="LocationText" Style="{StaticResource Caption}" FontFamily="Consolas, Courier New"
+                                   TextWrapping="Wrap" Margin="0,4,0,0" />
+                        <Button x:Name="LocationButton" Content="Change location…" Margin="0,14,0,0"
+                                HorizontalAlignment="Left" Click="OnLocationClicked" />
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="DRIVES" Style="{StaticResource GroupHeading}" />

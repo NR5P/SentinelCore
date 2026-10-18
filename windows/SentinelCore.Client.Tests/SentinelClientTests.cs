@@ -740,6 +740,89 @@ public class SentinelClientTests
         Assert.Null(status.Library);
         Assert.Empty(status.Drives);
         Assert.Null(status.Job);
+        Assert.False(status.LibraryOnNetwork);
+        Assert.Null(status.LibraryProblem);
+    }
+
+    [Fact]
+    public async Task A_library_on_another_computer_says_so_and_why_it_cannot_be_reached()
+    {
+        using var server = new FakeServer().OnGet("/api/family-files/status", """
+            {"enabled":true,"isAdmin":true,"username":"morgan","libraryFolder":"smb://192.168.1.20/Family/Files",
+             "libraryOnNetwork":true,"libraryProblem":"192.168.1.20 isn't answering."}
+            """);
+        using var client = ClientFor(server);
+
+        var status = await client.FamilyFilesStatusAsync();
+
+        Assert.Equal("smb://192.168.1.20/Family/Files", status.LibraryFolder);
+        Assert.True(status.LibraryOnNetwork);
+        Assert.Equal("192.168.1.20 isn't answering.", status.LibraryProblem);
+    }
+
+    [Fact]
+    public void The_location_form_adds_smb_to_a_bare_computer_and_share_and_keeps_local_folders_as_typed()
+    {
+        Assert.Equal("smb://nas/Family", FamilyLibraryLocationInput.FromForm(true, " nas/Family ", "", "").Location);
+        Assert.Equal("smb://nas/Family", FamilyLibraryLocationInput.FromForm(true, "smb://nas/Family", "", "").Location);
+        Assert.Equal(@"\\PC\Family", FamilyLibraryLocationInput.FromForm(true, @"\\PC\Family", "", "").Location);
+        Assert.Equal("//nas/Family", FamilyLibraryLocationInput.FromForm(true, "//nas/Family", "", "").Location);
+
+        var network = FamilyLibraryLocationInput.FromForm(true, "nas/Family", " morgan ", "pw");
+        Assert.Equal("morgan", network.Username);
+        Assert.Equal("pw", network.Password);
+
+        var local = FamilyLibraryLocationInput.FromForm(false, "/mnt/big ", "morgan", "pw");
+        Assert.Equal("/mnt/big", local.Location);
+        Assert.Equal("", local.Username);
+        Assert.Equal("", local.Password);
+    }
+
+    [Fact]
+    public async Task A_library_location_test_sends_the_form_and_reads_a_working_folder()
+    {
+        using var server = new FakeServer().On(
+            "POST", "/api/family-files/library/test", """{"detail":"Reached smb://nas/Family and wrote a test file there; it is empty."}""");
+        using var client = ClientFor(server);
+
+        var result = await client.FamilyFilesTestLibraryLocationAsync(
+            new FamilyLibraryLocationInput { Location = "smb://nas/Family", Username = "morgan", Password = "pw" });
+
+        Assert.True(result.Ok);
+        Assert.StartsWith("Reached smb://nas/Family", result.Message);
+        Assert.Equal("POST /api/family-files/library/test", server.Requests.Single());
+        var body = server.Bodies.Single();
+        Assert.Contains("\"location\":\"smb://nas/Family\"", body);
+        Assert.Contains("\"username\":\"morgan\"", body);
+        Assert.Contains("\"password\":\"pw\"", body);
+    }
+
+    [Fact]
+    public async Task A_refused_library_location_is_an_answer_that_says_a_sign_in_would_help()
+    {
+        using var server = new FakeServer().On(
+            "PUT", "/api/family-files/library", """{"error":"nas turned down the sign-in.","needsLogin":true}""", HttpStatusCode.BadRequest);
+        using var client = ClientFor(server);
+
+        var result = await client.FamilyFilesSetLibraryLocationAsync(new FamilyLibraryLocationInput { Location = "smb://nas/Family" });
+
+        Assert.False(result.Ok);
+        Assert.True(result.NeedsLogin);
+        Assert.Equal("nas turned down the sign-in.", result.Message);
+    }
+
+    [Fact]
+    public async Task A_moved_library_reports_the_folder_it_now_uses()
+    {
+        using var server = new FakeServer().On(
+            "PUT", "/api/family-files/library", """{"detail":"The library is now smb://nas/Family.","libraryFolder":"smb://nas/Family"}""");
+        using var client = ClientFor(server);
+
+        var result = await client.FamilyFilesSetLibraryLocationAsync(new FamilyLibraryLocationInput { Location = "smb://nas/Family" });
+
+        Assert.True(result.Ok);
+        Assert.Equal("smb://nas/Family", result.LibraryFolder);
+        Assert.Equal("PUT /api/family-files/library", server.Requests.Single());
     }
 
     [Fact]

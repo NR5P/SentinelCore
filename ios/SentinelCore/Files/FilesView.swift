@@ -443,6 +443,17 @@ struct FilesBanners: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            // The library lives on another computer that can't be reached right now: every
+            // listing fails until it's back, so say why rather than leaving an empty folder.
+            if let problem = libraryProblem {
+                banner(color: SentinelTheme.amber) {
+                    Image(systemName: "desktopcomputer.trianglebadge.exclamationmark").foregroundStyle(SentinelTheme.amber)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("The library's computer can't be reached").fontWeight(.semibold)
+                        Text(problem).foregroundStyle(.secondary).lineLimit(3)
+                    }
+                }
+            }
             if let error = session.error {
                 banner(color: SentinelTheme.red) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(SentinelTheme.red)
@@ -455,9 +466,14 @@ struct FilesBanners: View {
             }
         }
         .padding(.horizontal)
-        .padding(.top, session.upload != nil || session.job != nil || session.lastUploadNote != nil || session.error != nil ? 8 : 0)
+        .padding(.top, session.upload != nil || session.job != nil || session.lastUploadNote != nil || session.error != nil || libraryProblem != nil ? 8 : 0)
         .animation(.easeInOut(duration: 0.2), value: session.upload)
         .animation(.easeInOut(duration: 0.2), value: session.job)
+    }
+
+    private var libraryProblem: String? {
+        guard let problem = session.status?.libraryProblem, !problem.isEmpty else { return nil }
+        return problem
     }
 
     private func banner<Content: View>(color: Color, @ViewBuilder content: () -> Content) -> some View {

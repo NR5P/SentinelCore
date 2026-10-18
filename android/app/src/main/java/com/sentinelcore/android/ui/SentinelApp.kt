@@ -83,6 +83,7 @@ import com.sentinelcore.android.ui.files.DriveEditScreen
 import com.sentinelcore.android.ui.files.FilesDrivesScreen
 import com.sentinelcore.android.ui.files.FilesScreen
 import com.sentinelcore.android.ui.files.FilesTrashScreen
+import com.sentinelcore.android.ui.files.LibraryLocationScreen
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
 import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
@@ -922,7 +923,11 @@ private fun SentinelNavHost(
                 model = model,
                 onBack = { navController.popBackStack() },
                 onEditDrive = { id -> navController.navigate("files/drive/${id ?: "new"}") },
+                onEditLocation = { navController.navigate("files/location") },
             )
+        }
+        composable("files/location") {
+            LibraryLocationScreen(state = state, model = model, onBack = { navController.popBackStack() })
         }
         composable("files/drive/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
             DriveEditScreen(

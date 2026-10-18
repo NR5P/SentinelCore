@@ -27,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.data.FamilyDrive
@@ -54,6 +55,7 @@ fun FilesDrivesScreen(
     model: SentinelViewModel,
     onBack: () -> Unit,
     onEditDrive: (String?) -> Unit,
+    onEditLocation: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val feedback = rememberSaveFeedback()
@@ -125,15 +127,41 @@ fun FilesDrivesScreen(
                 }
             }
             if (current != null) {
+                current.libraryProblem?.let { problem ->
+                    item { FamilyLibraryProblemBanner(problem, Modifier.padding(horizontal = 14.dp)) }
+                }
                 current.library?.let { library ->
                     item {
                         Text(
-                            "${library.files} files, ${formatFileSize(library.bytes)} in the library" +
-                                (current.libraryFolder?.let { " at $it" } ?: ""),
+                            "${library.files} files, ${formatFileSize(library.bytes)} in the library",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                         )
+                    }
+                }
+
+                // Where the library's files live: a folder on the server or a shared folder on
+                // another computer. Only an Admin can move it.
+                item {
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 14.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Library location", style = MaterialTheme.typography.titleSmall, color = SentinelGreen)
+                            Text(
+                                if (current.libraryOnNetwork) "A shared folder on another computer, reached over the network."
+                                else "A folder on this server.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            current.libraryFolder?.takeIf { it.isNotBlank() }?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                            if (isAdmin) {
+                                OutlinedButton(onClick = onEditLocation, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Change location")
+                                }
+                            }
+                        }
                     }
                 }
 

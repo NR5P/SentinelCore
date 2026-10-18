@@ -1,0 +1,62 @@
+<Window x:Class="SentinelCore.App.Views.FilesLocationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Library location" Height="620" Width="580" MinHeight="460" MinWidth="460">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <Button x:Name="TestButton" Content="Test" MinWidth="90" HorizontalAlignment="Left" Click="OnTestClicked" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Use this location" Margin="10,0,0,0" MinWidth="120"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource SidebarBackground}" Padding="18,10">
+            <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" TextWrapping="Wrap" MinHeight="16" />
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock Text="Library location" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" Margin="0,0,0,10" />
+
+                <TextBlock Text="Where the files live" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <ComboBox x:Name="KindBox" SelectionChanged="OnKindChanged">
+                    <ComboBoxItem Content="A folder on this server" Tag="local" />
+                    <ComboBoxItem Content="A shared folder on another computer" Tag="network" />
+                </ComboBox>
+
+                <StackPanel x:Name="LocalPanel">
+                    <TextBlock Text="Folder" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="LocalPathBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="A full path as the server sees it, e.g. /mnt/bigdisk/Family Files. Blank keeps the library under the server's data folder." />
+                </StackPanel>
+
+                <StackPanel x:Name="NetworkPanel" Visibility="Collapsed">
+                    <TextBlock Text="Shared folder" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="NetworkPathBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="The computer's name or address, then the shared folder's name, then any folder inside it (made if it isn't there), e.g. smb://192.168.1.20/Family/Files or \\DESKTOP-PC\Family. On Windows, share the folder (Properties → Sharing) and give the account &quot;Change&quot; permission. On Linux, share it with Samba (smbpasswd -a for the user) with writable = yes." />
+
+                    <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="UsernameBox" />
+
+                    <TextBlock Text="Password" Style="{StaticResource FieldLabel}" />
+                    <PasswordBox x:Name="PasswordBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="Blank keeps the one already saved. The sign-in is saved for that computer and shared with Movies libraries on it. Leave both blank to use a saved sign-in, or to try as a guest." />
+                </StackPanel>
+
+                <TextBlock Style="{StaticResource Caption}" Margin="0,16,0,0" TextWrapping="Wrap"
+                           Text="Changing this doesn't move anything: files in the old place stay there. To fill the new place, copy them across yourself, or use &quot;Bring files back&quot; on a backup drive." />
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

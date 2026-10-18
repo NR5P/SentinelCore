@@ -269,6 +269,9 @@ fun FilesScreen(
                     }
                 }
 
+                status?.libraryProblem?.let { problem ->
+                    item { FamilyLibraryProblemBanner(problem, Modifier.padding(horizontal = 14.dp)) }
+                }
                 status?.job?.let { job ->
                     item { FamilyJobBanner(job, Modifier.padding(horizontal = 14.dp)) }
                 }

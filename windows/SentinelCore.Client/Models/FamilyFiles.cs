@@ -16,6 +16,11 @@ public sealed class FamilyFilesStatus
     // Admin only; null for a Viewer.
     public string? LibraryFolder { get; init; }
 
+    // True when the library is a shared folder on another computer (smb://host/Share/folder),
+    // and why that computer can't be reached right now, when it can't.
+    public bool LibraryOnNetwork { get; init; }
+    public string? LibraryProblem { get; init; }
+
     public long? MaxUploadBytes { get; init; }
     public FamilyLibraryTotals? Library { get; init; }
     public List<FamilyDrive> Drives { get; init; } = new();
@@ -145,6 +150,53 @@ public sealed class FamilyDriveTestResult
     public string? HostKeyFingerprint { get; init; }
 
     public string Message => Ok ? Detail ?? "Connected." : Error ?? "The connection test failed.";
+}
+
+/// <summary>
+/// Where the library should live, as sent to POST /library/test and PUT /library: a folder on the
+/// server, or smb://host/Share/folder. Blank username and password keep the sign-in already saved
+/// for that computer (or try as a guest).
+/// </summary>
+public sealed class FamilyLibraryLocationInput
+{
+    public string Location { get; set; } = "";
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+
+    /// <summary>
+    /// The form as typed. A bare "computer/Share" in the shared-folder box becomes
+    /// smb://computer/Share, as the dashboard does; a folder on the server goes as typed and never
+    /// carries a sign-in.
+    /// </summary>
+    public static FamilyLibraryLocationInput FromForm(bool network, string? path, string? username, string? password)
+    {
+        var location = (path ?? "").Trim();
+        if (network && location.Length > 0 && !SharePrefix.IsMatch(location)) location = $"smb://{location}";
+        return new FamilyLibraryLocationInput
+        {
+            Location = location,
+            Username = network ? (username ?? "").Trim() : "",
+            Password = network ? password ?? "" : "",
+        };
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SharePrefix =
+        new(@"^(smb:)?[\\/]{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+}
+
+/// <summary>
+/// POST /library/test and PUT /library. 200 carries a detail (and, for the PUT, the folder the
+/// library now uses); 400 carries the reason and whether a username and password would help.
+/// </summary>
+public sealed class FamilyLibraryLocationResult
+{
+    public bool Ok { get; init; }
+    public string? Detail { get; init; }
+    public string? Error { get; init; }
+    public bool NeedsLogin { get; init; }
+    public string? LibraryFolder { get; init; }
+
+    public string Message => Ok ? Detail ?? "That folder works." : Error ?? "That folder could not be used.";
 }
 
 /// <summary>The 202 of every "start a job" route.</summary>

@@ -37,6 +37,20 @@ struct FilesTVFolder: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 40) {
+                if let problem = status?.libraryProblem, !problem.isEmpty {
+                    HStack(spacing: 16) {
+                        Image(systemName: "desktopcomputer.trianglebadge.exclamationmark")
+                            .font(.title2)
+                            .foregroundStyle(SentinelTheme.amber)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("The library's computer can't be reached").font(.headline)
+                            Text(problem).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                }
                 if let error, listing == nil {
                     ContentUnavailableView {
                         Label("Couldn't Load the Library", systemImage: "exclamationmark.triangle")
@@ -118,9 +132,9 @@ struct FilesTVFolder: View {
             if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             self.error = error.localizedDescription
         }
-        if isRoot {
-            status = try? await model.client.familyFilesStatus()
-        }
+        // Every folder, not just the top: a library on another computer can drop off anywhere,
+        // and the status is what says why.
+        status = try? await model.client.familyFilesStatus()
     }
 
     private func jobTitle(_ job: FamilyFilesJob) -> String {

@@ -10,6 +10,10 @@ struct FamilyFilesStatus: Codable {
     let isAdmin: Bool?
     let username: String?
     let libraryFolder: String?
+    // True when the library is a shared folder on another computer (smb://host/Share/folder),
+    // and why that computer can't be reached right now, when it can't.
+    let libraryOnNetwork: Bool?
+    let libraryProblem: String?
     let maxUploadBytes: Int64?
     let library: FamilyFilesLibraryTotals?
     let drives: [FamilyDrive]?
@@ -247,6 +251,19 @@ struct FamilyDetailResult: Codable {
     let started: Bool?
     let removed: Int?
     let detail: String?
+}
+
+// Where the library should live: a folder on the server, or smb://host/Share/folder. Blank
+// username and password keep the sign-in already saved for that computer (or try as a guest).
+struct FamilyLibraryLocationInput: Encodable {
+    let location: String
+    let username: String
+    let password: String
+}
+
+struct FamilyLibraryLocationResult: Codable {
+    let detail: String?
+    let libraryFolder: String?
 }
 
 struct FamilyDriveRemovedResult: Codable {

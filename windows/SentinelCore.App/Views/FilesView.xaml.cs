@@ -105,8 +105,13 @@ public partial class FilesView : UserControl
         if (_status is not { Enabled: true } status)
         {
             SummaryText.Text = "Family Files is turned off in Settings.";
+            ProblemBanner.Visibility = Visibility.Collapsed;
             return;
         }
+
+        // Every listing fails while the library's computer is away; this says why.
+        ProblemText.Text = status.LibraryProblem ?? "";
+        ProblemBanner.Visibility = string.IsNullOrWhiteSpace(status.LibraryProblem) ? Visibility.Collapsed : Visibility.Visible;
 
         var parts = new List<string>();
         if (status.Library is { } library)

@@ -8,6 +8,9 @@ struct FamilyFilesStatus: Codable {
     let enabled: Bool
     let isAdmin: Bool?
     let username: String?
+    // Why the library's computer can't be reached right now, when the library is a shared
+    // folder on another computer that is off or turned down the sign-in.
+    let libraryProblem: String?
     let library: FamilyFilesLibraryTotals?
     let drives: [FamilyDrive]?
     let nightly: FamilyFilesNightly?

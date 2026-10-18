@@ -59,12 +59,22 @@ public partial class FilesDrivesWindow : Window
         DriveActions.Visibility = adminOnly;
         RunNightlyButton.Visibility = adminOnly;
         DuplicateActions.Visibility = adminOnly;
+        LocationButton.Visibility = adminOnly;
+
+        LocationKindText.Text = status.LibraryOnNetwork
+            ? "A shared folder on another computer, reached over the network."
+            : "A folder on this server.";
+        LocationText.Text = status.LibraryFolder ?? "";
+        LocationText.Visibility = string.IsNullOrWhiteSpace(status.LibraryFolder) ? Visibility.Collapsed : Visibility.Visible;
+        ProblemText.Text = status.LibraryProblem ?? "";
+        ProblemBanner.Visibility = string.IsNullOrWhiteSpace(status.LibraryProblem) ? Visibility.Collapsed : Visibility.Visible;
 
         var busy = status.Job is not null;
         SyncAllButton.IsEnabled = !busy && status.Drives.Any(drive => drive.Enabled);
         RunNightlyButton.IsEnabled = !busy;
         CheckButton.IsEnabled = !busy;
         CheckRemoveButton.IsEnabled = !busy;
+        LocationButton.IsEnabled = !busy;
 
         DriveHost.Children.Clear();
         foreach (var drive in status.Drives) DriveHost.Children.Add(DriveRow(drive, busy));
@@ -302,6 +312,15 @@ public partial class FilesDrivesWindow : Window
     {
         var window = new FilesDriveEditWindow(_model, null) { Owner = this };
         if (window.ShowDialog() == true) await ReloadAsync();
+    }
+
+    private async void OnLocationClicked(object sender, RoutedEventArgs e)
+    {
+        if (_status is not { } status) return;
+        var window = new FilesLocationWindow(_model, status) { Owner = this };
+        if (window.ShowDialog() != true) return;
+        Message(window.Detail ?? "");
+        await ReloadAsync();
     }
 
     private async void OnSyncAllClicked(object sender, RoutedEventArgs e) =>

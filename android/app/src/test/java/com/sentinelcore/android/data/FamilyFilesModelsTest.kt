@@ -36,6 +36,8 @@ class FamilyFilesModelsTest {
         assertTrue(status.isAdmin)
         assertEquals("morgan", status.username)
         assertEquals("/srv/family", status.libraryFolder)
+        assertFalse(status.libraryOnNetwork)
+        assertNull(status.libraryProblem)
         assertEquals(4294967296L, status.maxUploadBytes)
         assertEquals(1200, status.library?.files)
         assertEquals(5368709120L, status.library?.bytes)
@@ -77,6 +79,8 @@ class FamilyFilesModelsTest {
         assertFalse(status.isAdmin)
         assertNull(status.username)
         assertNull(status.libraryFolder)
+        assertFalse(status.libraryOnNetwork)
+        assertNull(status.libraryProblem)
         assertEquals(0L, status.maxUploadBytes)
         assertNull(status.library)
         assertTrue(status.drives.isEmpty())
@@ -121,6 +125,69 @@ class FamilyFilesModelsTest {
         assertNull(status.nightly?.nextRunUtc)
         assertNull(status.duplicates)
         assertNull(status.job)
+    }
+
+    @Test
+    fun `a library on another computer says so and why it can't be reached`() {
+        val status = parseFamilyFilesStatus(
+            JSONObject(
+                """
+                { "enabled": true, "isAdmin": true, "username": "morgan", "libraryFolder": "smb://192.168.1.20/Family/Files",
+                  "libraryOnNetwork": true, "libraryProblem": "192.168.1.20 isn't answering.", "maxUploadBytes": 10 }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals("smb://192.168.1.20/Family/Files", status.libraryFolder)
+        assertTrue(status.libraryOnNetwork)
+        assertEquals("192.168.1.20 isn't answering.", status.libraryProblem)
+
+        val fine = parseFamilyFilesStatus(JSONObject("""{ "enabled": true, "libraryOnNetwork": true, "libraryProblem": null }"""))
+        assertTrue(fine.libraryOnNetwork)
+        assertNull(fine.libraryProblem)
+    }
+
+    @Test
+    fun `the location form adds smb to a bare computer and share`() {
+        assertEquals("smb://nas/Family", FamilyLibraryLocationInput.from(true, " nas/Family ", " morgan ", "pw").location)
+        assertEquals("smb://nas/Family", FamilyLibraryLocationInput.from(true, "smb://nas/Family", "", "").location)
+        assertEquals("\\\\PC\\Family", FamilyLibraryLocationInput.from(true, "\\\\PC\\Family", "", "").location)
+        assertEquals("//nas/Family", FamilyLibraryLocationInput.from(true, "//nas/Family", "", "").location)
+
+        val network = FamilyLibraryLocationInput.from(true, "nas/Family", " morgan ", "pw")
+        assertEquals("morgan", network.username)
+        assertEquals("pw", network.password)
+
+        // A folder on the server goes as typed, and never carries a sign-in.
+        val local = FamilyLibraryLocationInput.from(false, "/mnt/big ", "morgan", "pw")
+        assertEquals("/mnt/big", local.location)
+        assertEquals("", local.username)
+        assertEquals("", local.password)
+        assertEquals("", FamilyLibraryLocationInput.from(false, "  ", "", "").location)
+
+        val json = network.toJson()
+        assertEquals("smb://nas/Family", json.getString("location"))
+        assertEquals("morgan", json.getString("username"))
+        assertEquals("pw", json.getString("password"))
+    }
+
+    @Test
+    fun `a location answer reads success, a 400 with needsLogin, and gives up on anything else`() {
+        val ok = parseFamilyLibraryLocationResult(200, JSONObject("""{ "detail": "Reached it.", "libraryFolder": "smb://nas/Family" }"""))!!
+        assertTrue(ok.ok)
+        assertEquals("Reached it.", ok.detail)
+        assertEquals("smb://nas/Family", ok.libraryFolder)
+
+        val login = parseFamilyLibraryLocationResult(400, JSONObject("""{ "error": "nas turned down the sign-in.", "needsLogin": true }"""))!!
+        assertFalse(login.ok)
+        assertEquals("nas turned down the sign-in.", login.detail)
+        assertTrue(login.needsLogin)
+
+        val disk = parseFamilyLibraryLocationResult(400, JSONObject("""{ "error": "The disk is full." }"""))!!
+        assertFalse(disk.needsLogin)
+
+        assertNull(parseFamilyLibraryLocationResult(403, JSONObject("""{ "error": "Admins only." }""")))
+        assertNull(parseFamilyLibraryLocationResult(400, null))
     }
 
     @Test

@@ -245,6 +245,54 @@ public sealed partial class SentinelClient
         throw new SentinelServerException((int)response.StatusCode, ExtractErrorMessage(data));
     }
 
+    // MARK: - The library's location (admin)
+
+    /// <summary>
+    /// Signs in to the folder (saving the sign-in for that computer when a username is given and
+    /// works) and writes then deletes a test file; nothing about the library changes. Like the
+    /// drive test, a 400 is the verdict and comes back as a result; only a session or transport
+    /// failure throws.
+    /// </summary>
+    public Task<FamilyLibraryLocationResult> FamilyFilesTestLibraryLocationAsync(
+        FamilyLibraryLocationInput input, CancellationToken ct = default) =>
+        SendLibraryLocationAsync(HttpMethod.Post, "/library/test", input, ct);
+
+    /// <summary>The same check, then the library moves there. Files in the old place stay put.</summary>
+    public Task<FamilyLibraryLocationResult> FamilyFilesSetLibraryLocationAsync(
+        FamilyLibraryLocationInput input, CancellationToken ct = default) =>
+        SendLibraryLocationAsync(HttpMethod.Put, "/library", input, ct);
+
+    private async Task<FamilyLibraryLocationResult> SendLibraryLocationAsync(
+        HttpMethod method, string path, FamilyLibraryLocationInput input, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, RequireUri($"{FamilyFilesBase}{path}"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(input, JsonOptions), System.Text.Encoding.UTF8, "application/json"),
+        };
+        _log.Log($"{method} {request.RequestUri}");
+
+        // As with the drive test, the caller's token is the limit: a computer that is asleep or
+        // off can take longer than the ordinary 15 seconds to give up on.
+        using var response = await _organizerHttp.SendAsync(request, ct).ConfigureAwait(false);
+        var data = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        _log.Log($"{method} {(int)response.StatusCode} for the library location");
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized) throw new SentinelAuthenticationRequiredException();
+        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            var decoded = Deserialize<FamilyLibraryLocationResult>(data, $"{FamilyFilesBase}{path}");
+            return new FamilyLibraryLocationResult
+            {
+                Ok = response.IsSuccessStatusCode,
+                Detail = decoded.Detail,
+                Error = decoded.Error,
+                NeedsLogin = decoded.NeedsLogin,
+                LibraryFolder = decoded.LibraryFolder,
+            };
+        }
+        throw new SentinelServerException((int)response.StatusCode, ExtractErrorMessage(data));
+    }
+
     /// <summary>Starts a backup to one drive in the background (202), or 409 while another job runs.</summary>
     public Task<FamilyJobStart> FamilyFilesSyncDriveAsync(string id, CancellationToken ct = default) =>
         SendAsync<FamilyJobStart, object>(

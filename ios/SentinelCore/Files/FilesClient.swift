@@ -150,6 +150,29 @@ extension SentinelClient {
         return try decode(try validated(data, response), for: request)
     }
 
+    // Signs in (saving the sign-in for that computer when a username is given and works) and
+    // writes then deletes a test file. Nothing about the library changes.
+    func familyTestLibraryLocation(_ input: FamilyLibraryLocationInput) async throws -> FamilyLibraryLocationResult {
+        try await familyLibraryLocation("POST", "/library/test", input)
+    }
+
+    // The same check, then the library moves there. Files in the old place are not moved.
+    func familySetLibraryLocation(_ input: FamilyLibraryLocationInput) async throws -> FamilyLibraryLocationResult {
+        try await familyLibraryLocation("PUT", "/library", input)
+    }
+
+    private func familyLibraryLocation(_ method: String, _ path: String, _ input: FamilyLibraryLocationInput) async throws -> FamilyLibraryLocationResult {
+        // Reaching a computer that is asleep or off takes the network's own timeout.
+        let request = try familyRequest(method, path, body: try JSONEncoder().encode(input), timeout: 90)
+        log("\(method) \(request.url?.absoluteString ?? path)")
+        let (data, response) = try await organizerSession.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 400,
+           let failure = try? JSONDecoder.sentinel.decode(FamilyLibraryLocationFailure.self, from: data) {
+            throw failure
+        }
+        return try decode(try validated(data, response), for: request)
+    }
+
     func familySyncDrive(id: String) async throws -> FamilyDetailResult {
         try await familyJSON("POST", "/drives/\(id)/sync")
     }
@@ -229,6 +252,13 @@ struct FamilyDriveTestFailure: Decodable, LocalizedError {
     let error: String?
     let hostKeyFingerprint: String?
     var errorDescription: String? { error ?? "The drive could not be reached." }
+}
+
+// A library location that didn't work, and whether a username and password would help.
+struct FamilyLibraryLocationFailure: Decodable, LocalizedError {
+    let error: String?
+    let needsLogin: Bool?
+    var errorDescription: String? { error ?? "That folder could not be used." }
 }
 
 // Where downloaded files land: a folder of the app's temporary directory, cleared on launch so

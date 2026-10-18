@@ -59,6 +59,8 @@ import com.sentinelcore.android.data.FamilyDeleteResult
 import com.sentinelcore.android.data.FamilyDrive
 import com.sentinelcore.android.data.FamilyDriveInput
 import com.sentinelcore.android.data.FamilyDriveTestResult
+import com.sentinelcore.android.data.FamilyLibraryLocationInput
+import com.sentinelcore.android.data.FamilyLibraryLocationResult
 import com.sentinelcore.android.data.FamilyDuplicateReport
 import com.sentinelcore.android.data.FamilyFileEntry
 import com.sentinelcore.android.data.FamilyFilesStatus
@@ -1254,6 +1256,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     suspend fun deleteFamilyDrive(id: String): String = repository.deleteFamilyDrive(id)
 
     suspend fun testFamilyDrive(input: FamilyDriveInput): FamilyDriveTestResult = repository.testFamilyDrive(input)
+
+    suspend fun testFamilyLibraryLocation(input: FamilyLibraryLocationInput): FamilyLibraryLocationResult =
+        repository.testFamilyLibraryLocation(input)
+
+    suspend fun setFamilyLibraryLocation(input: FamilyLibraryLocationInput): FamilyLibraryLocationResult =
+        repository.setFamilyLibraryLocation(input)
 
     suspend fun syncFamilyDrive(id: String): String = repository.syncFamilyDrive(id)
 

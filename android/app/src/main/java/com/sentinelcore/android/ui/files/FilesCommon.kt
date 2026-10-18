@@ -47,6 +47,7 @@ import com.sentinelcore.android.data.FamilyFilePaths
 import com.sentinelcore.android.data.FamilyJob
 import com.sentinelcore.android.data.ServerTimestamp
 import com.sentinelcore.android.ui.SentinelViewModel
+import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelRed
 import com.sentinelcore.android.ui.theme.SentinelTextDim
@@ -258,4 +259,16 @@ internal fun NameDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+// The library lives on another computer that can't be reached right now. Every listing fails
+// until it's back, so this says why instead of leaving an empty folder.
+@Composable
+internal fun FamilyLibraryProblemBanner(problem: String, modifier: Modifier = Modifier) {
+    Card(modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("The library's computer can't be reached", style = MaterialTheme.typography.titleSmall, color = SentinelAmber)
+            Text(problem, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

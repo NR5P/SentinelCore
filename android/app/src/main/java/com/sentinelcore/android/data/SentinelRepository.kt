@@ -2039,6 +2039,27 @@ class SentinelRepository(
         }
     }
 
+    // Admin. Signs in to the folder (saving the sign-in for that computer when a username is
+    // given and works) and writes then deletes a test file; nothing about the library changes.
+    // Like testFamilyDrive, a 400 is read as a result rather than thrown.
+    suspend fun testFamilyLibraryLocation(input: FamilyLibraryLocationInput): FamilyLibraryLocationResult =
+        familyLibraryLocation("/api/family-files/library/test", "POST", input)
+
+    // Admin. The same check, then the library moves there. Files in the old place stay put.
+    suspend fun setFamilyLibraryLocation(input: FamilyLibraryLocationInput): FamilyLibraryLocationResult =
+        familyLibraryLocation("/api/family-files/library", "PUT", input)
+
+    private suspend fun familyLibraryLocation(path: String, method: String, input: FamilyLibraryLocationInput): FamilyLibraryLocationResult =
+        withContext(Dispatchers.IO) {
+            // Reaching a computer that is asleep or off takes the network's own timeout.
+            val (status, body) = requestWithStatus(path, method = method, body = input.toJson().toString(), readTimeoutMillis = 90_000)
+            parseFamilyLibraryLocationResult(status, runCatching { JSONObject(body) }.getOrNull())
+                ?: throw SentinelApiException(
+                    status,
+                    parseServerError(body) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+                )
+        }
+
     // Admin. Each of these starts a background job (202) and answers 409 while another runs;
     // the caller polls familyFilesStatus() until `job` is null again.
     suspend fun syncFamilyDrive(id: String): String = withContext(Dispatchers.IO) {

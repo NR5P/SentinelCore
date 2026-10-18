@@ -19,6 +19,10 @@ data class FamilyFilesStatus(
     val username: String?,
     // Admin only; null for a Viewer.
     val libraryFolder: String?,
+    // True when the library is a shared folder on another computer (smb://host/Share/folder),
+    // and why that computer can't be reached right now, when it can't.
+    val libraryOnNetwork: Boolean = false,
+    val libraryProblem: String? = null,
     val maxUploadBytes: Long,
     val library: FamilyLibrarySummary?,
     val drives: List<FamilyDrive>,
@@ -203,6 +207,61 @@ data class FamilyDriveInput(
     }
 }
 
+// Where the library should live, as sent to POST /library/test and PUT /library: a folder on
+// the server, or smb://host/Share/folder. Blank username and password keep the sign-in already
+// saved for that computer (or try as a guest).
+data class FamilyLibraryLocationInput(
+    val location: String,
+    val username: String = "",
+    val password: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("location", location)
+        put("username", username)
+        put("password", password)
+    }
+
+    companion object {
+        // The form as typed: a bare "computer/Share" in the shared-folder box becomes
+        // smb://computer/Share, the same as the dashboard does. A local folder goes as typed.
+        fun from(network: Boolean, path: String, username: String, password: String): FamilyLibraryLocationInput {
+            var location = path.trim()
+            if (network && location.isNotEmpty() && !SHARE_PREFIX.containsMatchIn(location)) location = "smb://$location"
+            return FamilyLibraryLocationInput(
+                location = location,
+                username = if (network) username.trim() else "",
+                password = if (network) password else "",
+            )
+        }
+
+        private val SHARE_PREFIX = Regex("^(smb:)?[\\\\/]{2}", RegexOption.IGNORE_CASE)
+    }
+}
+
+// The answer to a location test or change. A 400 is a result too, not an exception: its
+// reason is what the form shows, and needsLogin says a username and password would help.
+data class FamilyLibraryLocationResult(
+    val ok: Boolean,
+    val detail: String,
+    val needsLogin: Boolean = false,
+    val libraryFolder: String? = null,
+)
+
+internal fun parseFamilyLibraryLocationResult(status: Int, json: JSONObject?): FamilyLibraryLocationResult? =
+    when {
+        status in 200..299 -> FamilyLibraryLocationResult(
+            ok = true,
+            detail = json?.optString("detail").orEmpty().ifBlank { "That folder works." },
+            libraryFolder = json?.stringOrNull("libraryFolder"),
+        )
+        status == 400 && json != null -> FamilyLibraryLocationResult(
+            ok = false,
+            detail = json.stringOrNull("error") ?: "That folder could not be used.",
+            needsLogin = json.optBoolean("needsLogin"),
+        )
+        else -> null
+    }
+
 // What the Files screen's upload banner shows: "Uploading 2 of 5: beach.jpg", with bytes when
 // the provider said how big the file is.
 data class FamilyUploadProgress(
@@ -302,6 +361,8 @@ internal fun parseFamilyFilesStatus(json: JSONObject): FamilyFilesStatus =
         isAdmin = json.optBoolean("isAdmin"),
         username = json.stringOrNull("username"),
         libraryFolder = json.stringOrNull("libraryFolder"),
+        libraryOnNetwork = json.optBoolean("libraryOnNetwork"),
+        libraryProblem = json.stringOrNull("libraryProblem")?.ifBlank { null },
         maxUploadBytes = json.optLong("maxUploadBytes"),
         library = json.optJSONObject("library")?.let {
             FamilyLibrarySummary(

@@ -36,6 +36,15 @@
             <StackPanel x:Name="Crumbs" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center" />
         </DockPanel>
 
+        <!-- The library is a shared folder on another computer that can't be reached right now. -->
+        <Border x:Name="ProblemBanner" DockPanel.Dock="Top" Background="#2A2210" BorderBrush="{StaticResource Amber}"
+                BorderThickness="1" CornerRadius="6" Padding="14,10" Margin="0,0,0,10" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock Text="The library's computer can't be reached" FontWeight="SemiBold" Foreground="{StaticResource Amber}" />
+                <TextBlock x:Name="ProblemText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
         <!-- The server is busy in the background: a backup, a restore, a duplicate check. -->
         <Border x:Name="JobBanner" DockPanel.Dock="Top" Background="#14241C" CornerRadius="6" Padding="14,10"
                 Margin="0,0,0,10" Visibility="Collapsed">

@@ -10,6 +10,7 @@ struct FilesDrivesView: View {
 
     @State private var addingDrive = false
     @State private var editingDrive: FamilyDrive?
+    @State private var editingLocation = false
     @State private var restoringDrive: FamilyDrive?
     @State private var confirmingRemoveDuplicates = false
     @State private var busyAction: String?
@@ -36,6 +37,7 @@ struct FilesDrivesView: View {
             }
             nightlySection
             duplicatesSection
+            locationSection
             librarySection
             if let note {
                 Section { Text(note).foregroundStyle(SentinelTheme.green) }
@@ -62,6 +64,14 @@ struct FilesDrivesView: View {
         .sheet(isPresented: $addingDrive) {
             NavigationStack {
                 DriveEditView(drive: nil)
+            }
+            .filesSheetFrame()
+            .environmentObject(model)
+            .environmentObject(session)
+        }
+        .sheet(isPresented: $editingLocation) {
+            NavigationStack {
+                LibraryLocationEditView()
             }
             .filesSheetFrame()
             .environmentObject(model)
@@ -229,6 +239,42 @@ struct FilesDrivesView: View {
         }
     }
 
+    // Where the library's files live: a folder on the server, or a shared folder on another
+    // computer. Only an admin can move it.
+    @ViewBuilder private var locationSection: some View {
+        if let status, status.enabled {
+            Section {
+                if let folder = status.libraryFolder, !folder.isEmpty {
+                    LabeledContent(status.libraryOnNetwork == true ? "Shared folder" : "Folder on the server") {
+                        Text(folder).font(.caption.monospaced()).textSelection(.enabled).multilineTextAlignment(.trailing)
+                    }
+                }
+                LabeledContent("Where", value: status.libraryOnNetwork == true ? "Another computer" : "This server")
+                if let problem = status.libraryProblem, !problem.isEmpty {
+                    Label {
+                        Text(problem).font(.callout)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(SentinelTheme.amber)
+                    }
+                }
+                if isAdmin {
+                    Button {
+                        editingLocation = true
+                    } label: {
+                        Label("Change Location…", systemImage: "folder.badge.gearshape")
+                    }
+                    .disabled(jobRunning)
+                }
+            } header: {
+                Text("Library Location")
+            } footer: {
+                if isAdmin {
+                    Text("The library can live in a folder on the server or in a shared folder on another computer, such as a Windows PC or a Linux machine running Samba.")
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var librarySection: some View {
         if let library = status?.library {
             Section("Library") {
@@ -236,11 +282,6 @@ struct FilesDrivesView: View {
                 LabeledContent("Size", value: FamilyFilesFormat.bytes(library.bytes))
                 if let indexed = library.indexedUtc {
                     LabeledContent("Indexed", value: FamilyFilesFormat.date(indexed))
-                }
-                if let folder = status?.libraryFolder, !folder.isEmpty {
-                    LabeledContent("Folder on the server") {
-                        Text(folder).font(.caption.monospaced()).textSelection(.enabled).multilineTextAlignment(.trailing)
-                    }
                 }
                 if let trash = status?.trash, trash.files > 0 {
                     LabeledContent("In the trash", value: "\(trash.files) \(trash.files == 1 ? "file" : "files"), \(FamilyFilesFormat.bytes(trash.bytes))")
@@ -589,6 +630,194 @@ struct DriveEditView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// MARK: - the library's location
+
+// Point the library at a folder on the server or a shared folder on another computer. "Test"
+// signs in and writes a test file without changing anything; "Use This Location" runs the same
+// check and then moves the library there. Files already in the old place are never moved.
+struct LibraryLocationEditView: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var session: FilesSession
+    @Environment(\.dismiss) private var dismiss
+
+    private enum Kind: Hashable { case local, network }
+
+    @State private var kind = Kind.local
+    @State private var localPath = ""
+    @State private var networkPath = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var isTesting = false
+    @State private var isSaving = false
+    @State private var testDetail: String?
+    @State private var testFailed = false
+    @State private var needsLogin = false
+    @State private var confirmingMove = false
+    @State private var filled = false
+
+    private var current: String { session.status?.libraryFolder ?? "" }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Where the files live", selection: $kind) {
+                    Text("A folder on this server").tag(Kind.local)
+                    Text("A shared folder on another computer").tag(Kind.network)
+                }
+            }
+            if kind == .network {
+                Section {
+                    SentinelTextField(label: "Shared folder", prompt: "smb://192.168.1.20/Family/Files", text: $networkPath)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        #endif
+                        .autocorrectionDisabled()
+                    SentinelTextField(label: "Username", prompt: "the account on that computer", text: $username)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .autocorrectionDisabled()
+                    SentinelTextField(label: "Password", prompt: "blank = the one already saved", text: $password, secure: true)
+                } header: {
+                    Text("Shared Folder")
+                } footer: {
+                    Text("The computer's name or address, then the shared folder's name, then any folder inside it (made if it isn't there), like smb://192.168.1.20/Family/Files or \\\\DESKTOP-PC\\Family. On Windows, share the folder (Properties → Sharing) and give the account \"Change\" permission. On Linux, share it with Samba (smbpasswd -a for the user) with writable = yes.\n\nThe sign-in is saved for that computer and shared with Movies libraries on it. Leave both blank to use a saved sign-in, or to try as a guest.")
+                }
+            } else {
+                Section {
+                    SentinelTextField(label: "Folder", prompt: "/mnt/bigdisk/Family Files (blank = the data folder)", text: $localPath)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Folder on the Server")
+                } footer: {
+                    Text("A full path as the server sees it. Blank keeps the library under the server's data folder.")
+                }
+            }
+            Section {
+                Button {
+                    Task { await test() }
+                } label: {
+                    HStack {
+                        Label("Test", systemImage: "bolt.horizontal")
+                        Spacer()
+                        if isTesting { ProgressView().controlSize(.small) }
+                    }
+                }
+                .disabled(isTesting || isSaving)
+                if let testDetail {
+                    Text(testDetail)
+                        .font(.callout)
+                        .foregroundStyle(testFailed ? SentinelTheme.red : SentinelTheme.green)
+                        .textSelection(.enabled)
+                }
+                if needsLogin && kind == .network {
+                    Text("Enter a username and password for an account on that computer that can change files in the folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Changing this doesn't move anything: files in the old place stay there. To fill the new place, copy them across yourself, or use \"Bring Files Back\" on a backup drive.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Library Location")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    if input.location == current { dismiss() } else { confirmingMove = true }
+                } label: {
+                    if isSaving { ProgressView().controlSize(.small) } else { Text("Use This Location") }
+                }
+                .disabled(isSaving || isTesting || (kind == .network && input.location.isEmpty))
+            }
+        }
+        .onAppear(perform: fill)
+        .confirmationDialog("Move the library to \(input.location.isEmpty ? "the server's data folder" : input.location)?",
+                            isPresented: $confirmingMove, titleVisibility: .visible) {
+            Button("Use This Location") { Task { await save() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(current.isEmpty
+                 ? "Files already in the old place stay there and stop showing in the library."
+                 : "Files already in \(current) stay there and stop showing in the library.")
+        }
+    }
+
+    private func fill() {
+        guard !filled else { return }
+        filled = true
+        if session.status?.libraryOnNetwork == true {
+            kind = .network
+            networkPath = current
+        } else {
+            localPath = current
+        }
+    }
+
+    private var input: FamilyLibraryLocationInput {
+        let network = kind == .network
+        var location = (network ? networkPath : localPath).trimmingCharacters(in: .whitespacesAndNewlines)
+        // A bare "computer/Share" typed into the shared-folder box.
+        if network, !location.isEmpty, !Self.looksLikeShare(location) { location = "smb://\(location)" }
+        return FamilyLibraryLocationInput(
+            location: location,
+            username: network ? username.trimmingCharacters(in: .whitespaces) : "",
+            password: network ? password : "")
+    }
+
+    static func looksLikeShare(_ location: String) -> Bool {
+        let lower = location.lowercased()
+        let rest = lower.hasPrefix("smb:") ? String(lower.dropFirst(4)) : lower
+        return rest.hasPrefix("//") || rest.hasPrefix("\\\\") || rest.hasPrefix("/\\") || rest.hasPrefix("\\/")
+    }
+
+    private func test() async {
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            let result = try await model.client.familyTestLibraryLocation(input)
+            show(result.detail ?? "That folder works.", failed: false, needsLogin: false)
+        } catch let failure as FamilyLibraryLocationFailure {
+            show(failure.errorDescription ?? "", failed: true, needsLogin: failure.needsLogin == true)
+        } catch {
+            show(error.localizedDescription, failed: true, needsLogin: false)
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let result = try await model.client.familySetLibraryLocation(input)
+            SaveFeedback.hapticSuccess()
+            session.lastUploadNote = result.detail
+            await session.refreshStatus(model.client)
+            session.changed()
+            dismiss()
+        } catch let failure as FamilyLibraryLocationFailure {
+            show(failure.errorDescription ?? "", failed: true, needsLogin: failure.needsLogin == true)
+        } catch {
+            show(error.localizedDescription, failed: true, needsLogin: false)
+        }
+    }
+
+    private func show(_ detail: String, failed: Bool, needsLogin: Bool) {
+        testDetail = detail
+        testFailed = failed
+        self.needsLogin = needsLogin
     }
 }
 
