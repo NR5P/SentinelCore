@@ -240,6 +240,22 @@ final class AudioAPI {
         try await send("POST", "/api/music/downloads/\(id)/retry")
     }
 
+    // "Suggested for you" (MUSIC_AND_PODCASTS.md "Suggestions"). While `state` is working, read
+    // again every few seconds.
+    func musicSuggestions() async throws -> MusicSuggestions {
+        try await get("/api/music/downloads/suggestions", timeout: 30)
+    }
+
+    // "Not interested": with `title` that one album, without it the whole artist.
+    func dismissMusicSuggestion(artist: String, title: String?) async throws {
+        try await fire("POST", "/api/music/downloads/suggestions/dismiss", MusicSuggestionDismissInput(artist: artist, title: title))
+    }
+
+    // Downloading a suggestion is an imported list called "Suggested for you".
+    func downloadMusicSuggestions(_ albums: [MusicSuggestedAlbum]) async throws -> MediaImportJob {
+        try await send("POST", "/api/music/downloads/imports", musicSuggestionImport(albums), timeout: 60)
+    }
+
     // MARK: Podcasts (§6)
 
     func podcastsStatus() async throws -> PodcastsStatus { try await get("/api/podcasts/status") }

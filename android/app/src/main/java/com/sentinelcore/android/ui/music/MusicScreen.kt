@@ -22,9 +22,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
@@ -101,6 +103,8 @@ fun MusicScreen(state: SentinelUiState) {
                 }
                 AudioMoreMenu { close ->
                     if (canDownload.value == true) Item(Icons.Default.LibraryMusic, "Album downloads") { close(); ui.nav.open(AudioRoutes.ALBUM_DOWNLOADS) }
+                    if (canDownload.value == true) Item(Icons.Default.AutoAwesome, "Suggested for you") { close(); ui.nav.open(AudioRoutes.SUGGESTIONS) }
+                    if (canDownload.value == true) Item(Icons.Default.UploadFile, "Import a list") { close(); ui.nav.open(com.sentinelcore.android.ui.screens.mediaImportRoute("music")) }
                     if (ui.isAdmin) Item(Icons.Default.LibraryMusic, "Music libraries") { close(); ui.nav.open(AudioRoutes.MUSIC_LIBRARIES) }
                 }
             },
@@ -118,7 +122,7 @@ fun MusicScreen(state: SentinelUiState) {
             }
         }
         when (pane) {
-            MusicPane.HOME -> MusicHomePane()
+            MusicPane.HOME -> MusicHomePane(canDownload.value == true)
             MusicPane.LIBRARY -> MusicLibraryPane()
             MusicPane.SEARCH -> MusicSearchPane()
         }
@@ -128,7 +132,7 @@ fun MusicScreen(state: SentinelUiState) {
 // ---------------- Home ----------------
 
 @Composable
-private fun MusicHomePane() {
+private fun MusicHomePane(canDownload: Boolean) {
     val ui = LocalAudioUi.current
     val home = rememberLoadable(Unit) { ui.api.musicHome() }
     LoadableContent(home) { value ->
@@ -143,12 +147,12 @@ private fun MusicHomePane() {
             }
             return@LoadableContent
         }
-        HomeRows(value)
+        HomeRows(value, canDownload)
     }
 }
 
 @Composable
-private fun HomeRows(home: MusicHome) {
+private fun HomeRows(home: MusicHome, canDownload: Boolean) {
     val ui = LocalAudioUi.current
     val numbers = NumberFormat.getIntegerInstance()
     // The banner sits above the list rather than as its first row: it arrives after the rows, and as
@@ -191,6 +195,8 @@ private fun HomeRows(home: MusicHome) {
             item { SectionTitle("Made for you", subtitle = "Mixes from what you play") }
             item { Shelf { items(home.mixes, key = { "mix" + it.id }) { mix -> MixCard(mix) { ui.engine.playMix(mix); ui.message("Playing ${mix.name}") } } } }
         }
+        // "Suggested for you": albums to download, only where downloading is allowed.
+        if (canDownload) item(key = "suggestions") { SuggestionsShelf() }
         if (home.recentlyAdded.isNotEmpty()) {
             item { SectionTitle("Recently added", actionLabel = "See all") { ui.nav.open("music/albums?sort=added") } }
             item { Shelf { items(home.recentlyAdded, key = { "add" + it.id }) { AlbumCard(it, onLongClick = null) { ui.nav.openAlbum(it.id) } } } }

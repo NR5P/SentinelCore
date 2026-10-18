@@ -147,6 +147,7 @@ public partial class MoviesView : UserControl
         _downloadStatus = status;
         var can = status.ShowsAddButton;
         AddButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        ImportButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
         DownloadsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
         DownloadsButton.Content = "Downloads";
         DrawVpnLight(status.Status);
@@ -184,8 +185,15 @@ public partial class MoviesView : UserControl
 
     private void OnDownloadsClicked(object sender, RoutedEventArgs e) => OpenDownloads();
 
-    private void OpenDownloads() =>
-        _navigator.Push(new MediaDownloadsView(_model, _navigator, _downloadStatus), "Downloads");
+    // "Import a list" (MOVIE_DOWNLOADS.md "Import a list"): once started, Downloads shows its progress.
+    private void OnImportClicked(object sender, RoutedEventArgs e)
+    {
+        var window = new MediaImportWindow(_model, MediaImportKind.Movies) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() == true) OpenDownloads(window.StartedMessage);
+    }
+
+    private void OpenDownloads(string? startedMessage = null) =>
+        _navigator.Push(new MediaDownloadsView(_model, _navigator, _downloadStatus, startedMessage), "Downloads");
 
     // ---------------------------------------------------------------- Search offers a download
 

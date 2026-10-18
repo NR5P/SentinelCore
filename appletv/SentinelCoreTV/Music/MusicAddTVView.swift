@@ -64,6 +64,7 @@ struct MusicAddTVView: View {
                 Section { Text(notice).foregroundStyle(SentinelTheme.green) }
             }
             downloadsSection
+            MediaImportListsTVSection(kind: .music)
         }
         .confirmationDialog(confirming?.title ?? "Download", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
                             titleVisibility: .visible) {

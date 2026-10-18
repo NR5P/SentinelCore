@@ -36,6 +36,19 @@ public sealed class MediaDownloadStore : IDisposable
                 CreatedAt TEXT NOT NULL,
                 Data TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS MusicSuggestionCache (
+                Key TEXT PRIMARY KEY,
+                FetchedAt TEXT NOT NULL,
+                Data TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS MusicSuggestionDismissals (
+                UserKey TEXT NOT NULL,
+                Key TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL,
+                PRIMARY KEY (UserKey, Key)
+            );
             """;
         command.ExecuteNonQuery();
     }
@@ -162,6 +175,77 @@ public sealed class MediaDownloadStore : IDisposable
             using var command = _connection.CreateCommand();
             command.CommandText = "DELETE FROM MediaImports WHERE Id = $id";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    // MARK: - Music suggestions (MusicSuggestions.cs)
+
+    // What ListenBrainz or MusicBrainz said about one artist, and when it was asked.
+    public async Task<(DateTimeOffset FetchedAt, string Data)?> GetSuggestionCacheAsync(string key, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT FetchedAt, Data FROM MusicSuggestionCache WHERE Key = $key";
+            command.Parameters.AddWithValue("$key", key);
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? (DateTimeOffset.Parse(reader.GetString(0), System.Globalization.CultureInfo.InvariantCulture), reader.GetString(1))
+                : null;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task SetSuggestionCacheAsync(string key, DateTimeOffset fetchedAt, string data, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO MusicSuggestionCache (Key, FetchedAt, Data) VALUES ($key, $at, $data)
+                ON CONFLICT(Key) DO UPDATE SET FetchedAt = excluded.FetchedAt, Data = excluded.Data
+                """;
+            command.Parameters.AddWithValue("$key", key);
+            command.Parameters.AddWithValue("$at", fetchedAt.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$data", data);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    // "Not interested": an artist ("artist:<key>") or one album ("album:<artist key>|<title key>").
+    public async Task<HashSet<string>> GetSuggestionDismissalsAsync(string userKey, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT Key FROM MusicSuggestionDismissals WHERE UserKey = $user";
+            command.Parameters.AddWithValue("$user", userKey);
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            while (await reader.ReadAsync(cancellationToken)) keys.Add(reader.GetString(0));
+            return keys;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task SetSuggestionDismissedAsync(string userKey, string key, bool dismissed, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = dismissed
+                ? "INSERT OR IGNORE INTO MusicSuggestionDismissals (UserKey, Key, CreatedAt) VALUES ($user, $key, $at)"
+                : "DELETE FROM MusicSuggestionDismissals WHERE UserKey = $user AND Key = $key";
+            command.Parameters.AddWithValue("$user", userKey);
+            command.Parameters.AddWithValue("$key", key);
+            command.Parameters.AddWithValue("$at", now.UtcDateTime.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally { _lock.Release(); }

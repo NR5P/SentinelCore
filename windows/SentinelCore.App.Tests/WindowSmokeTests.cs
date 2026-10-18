@@ -106,6 +106,10 @@ public class WindowSmokeTests
                     CanDownload = true, TmdbConfigured = false, MovieLibrary = false, ShowLibrary = true,
                 })),
                 ("MediaDownloadSitesWindow", () => new MediaDownloadSitesWindow(model)),
+                ("MediaImportWindow (music)", () => new MediaImportWindow(model, MediaImportKind.Music)),
+                ("MediaImportWindow (movies)", () => new MediaImportWindow(model, MediaImportKind.Movies)),
+                ("MediaImportDetailWindow", () => new MediaImportDetailWindow(model, MediaImportKind.Music, "5f0c2a8e-1d2b-4c1e-9a77-0b6c1f3e2d10")),
+                ("MediaDownloadsView (import started)", () => new MediaDownloadsView(model, NullNavigator.Instance, null, "Working through 2 movies. Watch it under Downloads.")),
                 ("MediaDownloadAddWindow (VPN off)", () => new MediaDownloadAddWindow(model, DownloadStatus("stopped", "disabled", false))),
                 ("MoviesView (every VPN light)", () =>
                 {
@@ -138,6 +142,8 @@ public class WindowSmokeTests
                 ("PlaylistView", () => new SentinelCore.App.Views.Audio.PlaylistView(model, NullNavigator.Instance, "p1")),
                 ("MusicTrackListView", () => new SentinelCore.App.Views.Audio.MusicTrackListView(model, NullNavigator.Instance, "Rock", genre: "Rock")),
                 ("MusicDownloadsView", () => new SentinelCore.App.Views.Audio.MusicDownloadsView(model, NullNavigator.Instance)),
+                ("MusicSuggestionsView", () => new SentinelCore.App.Views.Audio.MusicSuggestionsView(model, NullNavigator.Instance)),
+                ("MusicSuggestionsShelf", () => new SentinelCore.App.Views.Audio.MusicSuggestionsShelf(model, NullNavigator.Instance, new System.Windows.Controls.ScrollViewer())),
                 ("AudioStatsView", () => new SentinelCore.App.Views.Audio.AudioStatsView(model, NullNavigator.Instance)),
                 ("PodcastsView", () => new SentinelCore.App.Views.Audio.PodcastsView(model, NullNavigator.Instance)),
                 ("PodcastShowView", () => new SentinelCore.App.Views.Audio.PodcastShowView(model, NullNavigator.Instance, "s1")),

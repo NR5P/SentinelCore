@@ -493,6 +493,25 @@ final class SentinelClient {
         try await mediaDownloadsRequest("/api/media/downloads/vpn/test", method: "POST", timeout: 90)
     }
 
+    // MARK: Imported lists (MOVIE_DOWNLOADS.md "Import a list")
+    // The same routes under /api/music/downloads and /api/media/downloads - `kind` picks which.
+    // Lists are imported from the iPhone, Mac or dashboard; the TV follows them and can pause,
+    // resume and search the missing ones again.
+
+    func mediaImports(kind: MediaImportKind) async throws -> [MediaImportJob] {
+        let list: MediaImportJobList = try await get("\(kind.base)/imports")
+        return list.imports ?? []
+    }
+
+    func pauseMediaImport(kind: MediaImportKind, id: String, paused: Bool) async throws -> MediaImportJob {
+        try await send("\(kind.base)/imports/\(id)/pause", method: "POST", body: MediaImportPauseInput(paused: paused))
+    }
+
+    // Everything not found or failed is searched for again.
+    func retryMediaImport(kind: MediaImportKind, id: String) async throws -> MediaImportJob {
+        try await send("\(kind.base)/imports/\(id)/retry", method: "POST", body: Optional<String>.none)
+    }
+
     // Over the long-timeout session. A 503 with `starting: true` (the VPN still coming up) is
     // thrown as MediaDownloadsStartingError so the screen can say so.
     private func mediaDownloadsRequest<T: Decodable>(

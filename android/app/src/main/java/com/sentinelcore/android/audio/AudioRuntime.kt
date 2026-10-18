@@ -55,6 +55,12 @@ class AudioRuntime private constructor(context: Context) {
         repository.organizerRequest(method, path, query, body, contentType, timeout)
     }
 
+    // "Import a list" on Music (core/docs/MOVIE_DOWNLOADS.md), over the same transport.
+    val musicImports = com.sentinelcore.android.data.MediaImportApi("music") { method, path, query, body, contentType, timeout ->
+        ensureAddress()
+        repository.organizerRequest(method, path, query, body, contentType, timeout)
+    }
+
     // What the server last said about the two tabs; remembered so the tabs don't blink in on
     // every launch.
     private val _enabled = MutableStateFlow(prefs.lastEnabled)

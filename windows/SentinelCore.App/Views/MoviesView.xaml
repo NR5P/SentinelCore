@@ -33,6 +33,9 @@
                 <Button x:Name="AddButton" Content="+ Add" Margin="6,0,0,0" Style="{StaticResource PrimaryButton}"
                         Visibility="Collapsed" Click="OnAddClicked"
                         ToolTip="Find a movie or TV episodes and download them into the library" />
+                <Button x:Name="ImportButton" Content="Import a list" Margin="6,0,0,0" Visibility="Collapsed"
+                        Click="OnImportClicked"
+                        ToolTip="Download everything on a Letterboxd or IMDb list you exported" />
                 <Button x:Name="DownloadsButton" Content="Downloads" Margin="6,0,0,0" Visibility="Collapsed"
                         Click="OnDownloadsClicked" ToolTip="What is downloading, and what arrived recently" />
                 <TextBox x:Name="SearchBox" Width="220" Margin="14,0,0,0" TextChanged="OnSearchChanged"

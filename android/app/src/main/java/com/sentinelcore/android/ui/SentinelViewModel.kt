@@ -961,6 +961,11 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun mediaDownloads() = repository.mediaDownloads()
 
+    // "Import a list" on Movies ("movies") and Music ("music") - same server and session.
+    fun mediaImportApi(kind: String) = com.sentinelcore.android.data.MediaImportApi(kind) { method, path, query, body, contentType, timeout ->
+        repository.organizerRequest(method, path, query, body, contentType, timeout)
+    }
+
     suspend fun mediaDownload(id: String) = repository.mediaDownload(id)
 
     suspend fun deleteMediaDownload(id: String) = repository.deleteMediaDownload(id)

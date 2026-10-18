@@ -778,6 +778,48 @@ final class SentinelClient {
         try await mediaDownloadsRequest("/api/media/downloads/vpn/test", method: "POST", timeout: 90)
     }
 
+    // MARK: Import a list (Music and Movies; MOVIE_DOWNLOADS.md "Import a list")
+    // The same routes under /api/music/downloads and /api/media/downloads - `kind` picks which.
+
+    // The server reads the files and looks every album or film up in the library, so a big
+    // export gets the long timeout. Nothing is saved.
+    func mediaImportPreview(kind: MediaImportKind, files: [MediaImportFile]) async throws -> MediaImportPreview {
+        try await mediaDownloadsRequest(
+            "\(kind.base)/import/preview", method: "POST", body: MediaImportPreviewInput(files: files), timeout: 120)
+    }
+
+    func startMediaImport(kind: MediaImportKind, _ input: MediaImportStartInput) async throws -> MediaImportJob {
+        try await mediaDownloadsRequest("\(kind.base)/imports", method: "POST", body: input)
+    }
+
+    func mediaImports(kind: MediaImportKind) async throws -> [MediaImportJob] {
+        let list: MediaImportJobList = try await get("\(kind.base)/imports")
+        return list.imports ?? []
+    }
+
+    func mediaImport(kind: MediaImportKind, id: String) async throws -> MediaImportJob {
+        try await get("\(kind.base)/imports/\(id)")
+    }
+
+    func pauseMediaImport(kind: MediaImportKind, id: String, paused: Bool) async throws -> MediaImportJob {
+        try await send("\(kind.base)/imports/\(id)/pause", method: "POST", body: MediaImportPauseInput(paused: paused))
+    }
+
+    // Everything not found or failed is searched for again.
+    func retryMediaImport(kind: MediaImportKind, id: String) async throws -> MediaImportJob {
+        try await send("\(kind.base)/imports/\(id)/retry", method: "POST", body: Optional<String>.none)
+    }
+
+    // Leaves one album or film out.
+    func skipMediaImportItem(kind: MediaImportKind, id: String, itemId: String) async throws -> MediaImportJob {
+        try await send("\(kind.base)/imports/\(id)/items/\(itemId)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    // Stops and forgets the list; downloads it already queued carry on.
+    func deleteMediaImport(kind: MediaImportKind, id: String) async throws {
+        let _: EmptyResponse = try await send("\(kind.base)/imports/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
     // MARK: Sites (admin)
     // Prowlarr lives inside the VPN, so each of these may start it and wait up to ~25 s - past the
     // main session's 15 s - before answering 503 { starting: true }, thrown as

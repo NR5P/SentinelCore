@@ -492,6 +492,7 @@ private struct MusicReleasePickerView: View {
 struct MusicDownloadsListView: View {
     @State private var list: MusicDownloadList?
     @State private var errorMessage: String?
+    @State private var importing = false
 
     var body: some View {
         List {
@@ -505,6 +506,7 @@ struct MusicDownloadsListView: View {
             if !active.isEmpty {
                 Section("Downloading") { ForEach(active) { row($0) } }
             }
+            MediaImportListsSection(kind: .music) { importing = true }
             let recent = list?.recent ?? []
             if !recent.isEmpty {
                 Section("Recent") { ForEach(recent) { row($0) } }
@@ -515,6 +517,10 @@ struct MusicDownloadsListView: View {
             if let errorMessage { Text(errorMessage).foregroundStyle(SentinelTheme.red) }
         }
         .navigationTitle("Album Downloads")
+        .sheet(isPresented: $importing) {
+            MediaImportSheet(kind: .music) { _ in }
+                .environmentObject(AppModel.shared)
+        }
         .task {
             while !Task.isCancelled {
                 await load()

@@ -42,6 +42,20 @@ public static class MusicDownloadEndpoints
 
         enabled.MapImports(MediaImportList.KindMusic);
 
+        // "Suggested for you" (MusicSuggestions.cs). Downloading one is an imported list
+        // (POST /imports), so it needs nothing of its own.
+        enabled.MapGet("/suggestions", async (bool? refresh, HttpContext context, MusicSuggestionService suggestions, CancellationToken ct) =>
+            Results.Ok(await suggestions.GetAsync(MediaEndpoints.UserKey(context), context.User.Identity?.Name ?? "",
+                context.User.IsInRole(nameof(AccountRole.Admin)), refresh == true, ct)));
+
+        enabled.MapPost("/suggestions/dismiss", async (MusicSuggestionDismissInput input, HttpContext context, MusicSuggestionService suggestions, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(input.Artist)) return Results.BadRequest(new { error = "Say which artist." });
+            await suggestions.DismissAsync(MediaEndpoints.UserKey(context), input.Artist.Trim(),
+                string.IsNullOrWhiteSpace(input.Title) ? null : input.Title.Trim(), input.Dismissed, ct);
+            return Results.NoContent();
+        });
+
         enabled.MapGet("/lookup", async (string? q, MusicDownloadLookup lookup, IMusicAudioSource music, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(q)) return Results.BadRequest(new { error = "Type an album or an artist to search for." });

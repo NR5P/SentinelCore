@@ -474,6 +474,8 @@ fun MovieAddScreen(
     onDownloadStarted: () -> Unit,
     // Null for "+ Add"'s Find; the library search's offer passes the title to open at.
     start: MovieAddStart? = null,
+    // "Import a list" (Letterboxd / IMDb); null hides the link.
+    onImportList: (() -> Unit)? = null,
 ) {
     val add: MovieAddModel = viewModel { MovieAddModel(model, start) }
     BackHandler(enabled = add.stage != add.firstStage) { add.back() }
@@ -502,7 +504,7 @@ fun MovieAddScreen(
             }
         }
         when (add.stage) {
-            AddStage.FIND -> AddFind(add, model)
+            AddStage.FIND -> AddFind(add, model, onImportList)
             AddStage.SHOW -> AddShow(add, back)
             AddStage.RELEASES -> AddReleases(add, back, onDownloadStarted)
         }
@@ -511,7 +513,7 @@ fun MovieAddScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddFind(add: MovieAddModel, model: SentinelViewModel) {
+private fun AddFind(add: MovieAddModel, model: SentinelViewModel, onImportList: (() -> Unit)?) {
     val status = add.status
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -577,6 +579,9 @@ private fun AddFind(add: MovieAddModel, model: SentinelViewModel) {
             itemsIndexed(add.results.orEmpty(), key = { index, r -> "${r.kind}-${r.tmdbId}-$index" }) { _, result ->
                 LookupRow(model, result, onClick = { add.pick(result) })
             }
+        }
+        if (onImportList != null && add.kind == "movie") {
+            item { ImportListLink("movies", onImportList) }
         }
     }
 }
@@ -979,6 +984,10 @@ fun MovieDownloadsScreen(
     onAdd: () -> Unit,
     onSites: () -> Unit,
     onOpenItem: (String) -> Unit,
+    // "Import a list": the imported lists' cards show under the queue when these are given.
+    importApi: com.sentinelcore.android.data.MediaImportApi? = null,
+    onImportList: () -> Unit = {},
+    onOpenImport: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<MediaDownloadStatus?>(null) }
@@ -1075,6 +1084,9 @@ fun MovieDownloadsScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Downloading", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    if (importApi != null) {
+                        TextButton(onClick = onImportList) { Text("Import a list") }
+                    }
                     Button(onClick = onAdd) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
@@ -1101,6 +1113,11 @@ fun MovieDownloadsScreen(
                     onCancel = { confirmCancel = download },
                     onRemove = {},
                 )
+            }
+            if (importApi != null) {
+                item(key = "imported-lists") {
+                    ImportedListsSection(importApi, onImport = onImportList, onOpen = onOpenImport, modifier = Modifier.padding(top = 8.dp))
+                }
             }
             if (data.recent.isNotEmpty()) {
                 item {

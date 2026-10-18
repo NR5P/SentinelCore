@@ -21,6 +21,7 @@ struct MusicView: View {
     @AppStorage("music.pane") private var pane: Pane = .home
     @State private var showingStats = false
     @State private var showingAdd = false
+    @State private var importingList = false
     @State private var canDownload = false
     @State private var downloadsReason: String?
     private var router: AudioRouter { AudioRouter.shared }
@@ -28,7 +29,7 @@ struct MusicView: View {
     var body: some View {
         Group {
             switch pane {
-            case .home: MusicHomeView(isActive: isActive)
+            case .home: MusicHomeView(isActive: isActive, canDownload: canDownload)
             case .library: MusicLibraryView()
             case .search: MusicSearchView()
             }
@@ -78,6 +79,12 @@ struct MusicView: View {
                         } label: {
                             Label("Album Downloads", systemImage: "tray.and.arrow.down")
                         }
+                        Button("Import a List", systemImage: "list.bullet.rectangle") { importingList = true }
+                        NavigationLink {
+                            MusicSuggestionsView()
+                        } label: {
+                            Label("Suggested for You", systemImage: "sparkles")
+                        }
                     }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
@@ -104,8 +111,16 @@ struct MusicView: View {
         .sheet(isPresented: $showingAdd) {
             MusicAddAlbumView()
         }
-        .task(id: isActive) {
-            guard isActive else { return }
+        .sheet(isPresented: $importingList) {
+            MediaImportSheet(kind: .music) { count in
+                AudioToast.shared.show("Working through \(MediaImportKind.music.count(count)). Watch it under Album Downloads.")
+            }
+            .environmentObject(model)
+        }
+        // Keyed on the server too: at launch straight into Music the address isn't known yet, and
+        // a check that fails then would leave "+ Add" and "Suggested for You" hidden for good.
+        .task(id: "\(isActive)|\(model.activeServerURL)") {
+            guard isActive, !model.activeServerURL.isEmpty else { return }
             do {
                 let status = try await model.client.musicDownloadsStatus()
                 canDownload = status.canDownload == true
@@ -135,6 +150,8 @@ struct MusicRouteView: View {
 
 private struct MusicHomeView: View {
     let isActive: Bool
+    // Downloads allowed: "Suggested for You" shows.
+    var canDownload = false
     @EnvironmentObject private var model: AppModel
     @State private var home: MusicHome?
     @State private var loading = false
@@ -146,6 +163,9 @@ private struct MusicHomeView: View {
             LazyVStack(alignment: .leading, spacing: 28) {
                 if let home {
                     header(home)
+                    if canDownload {
+                        MusicSuggestionsShelf()
+                    }
                     if let pinned = home.pinned, !pinned.isEmpty {
                         AudioShelf(title: "Pinned") {
                             ForEach(pinned) { PlaylistTile(playlist: $0) }
@@ -197,6 +217,11 @@ private struct MusicHomeView: View {
             await load()
         }
         .onReceive(NotificationCenter.default.publisher(for: .audioLibraryChanged)) { _ in refreshToken += 1 }
+        // "Suggested for You" (MusicSuggestionsShelf) is filled from here.
+        .task(id: "\(isActive && canDownload)|\(model.activeServerURL)") {
+            guard isActive, canDownload, !model.activeServerURL.isEmpty else { return }
+            await MusicSuggestionsStore.shared.follow()
+        }
     }
 
     private struct Key: Hashable {

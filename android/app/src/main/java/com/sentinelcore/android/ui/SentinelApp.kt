@@ -120,6 +120,12 @@ import com.sentinelcore.android.ui.screens.MOVIE_DETAIL_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_PLAYER_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_ADD_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOADS_ROUTE
+import com.sentinelcore.android.ui.screens.MEDIA_IMPORT_LIST_ROUTE
+import com.sentinelcore.android.ui.screens.MEDIA_IMPORT_ROUTE
+import com.sentinelcore.android.ui.screens.MediaImportDetailScreen
+import com.sentinelcore.android.ui.screens.MediaImportScreen
+import com.sentinelcore.android.ui.screens.mediaImportListRoute
+import com.sentinelcore.android.ui.screens.mediaImportRoute
 import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOAD_SITES_ROUTE
 import com.sentinelcore.android.ui.screens.MovieAddScreen
 import com.sentinelcore.android.ui.screens.movieAddArguments
@@ -664,6 +670,7 @@ private fun SentinelNavHost(
                 model = model,
                 start = movieAddStart(entry.arguments),
                 onBack = { navController.popBackStack() },
+                onImportList = { navController.navigate(mediaImportRoute("movies")) { launchSingleTop = true } },
                 onDownloadStarted = {
                     navController.navigate(MOVIE_DOWNLOADS_ROUTE) {
                         popUpTo(MOVIE_ADD_ROUTE) { inclusive = true }
@@ -679,10 +686,49 @@ private fun SentinelNavHost(
                 onAdd = { navController.navigate(movieAddRoute()) { launchSingleTop = true } },
                 onSites = { navController.navigate(MOVIE_DOWNLOAD_SITES_ROUTE) { launchSingleTop = true } },
                 onOpenItem = { navController.navigate(movieDetailRoute(it)) },
+                importApi = remember { model.mediaImportApi("movies") },
+                onImportList = { navController.navigate(mediaImportRoute("movies")) { launchSingleTop = true } },
+                onOpenImport = { navController.navigate(mediaImportListRoute("movies", it)) },
             )
         }
         composable(MOVIE_DOWNLOAD_SITES_ROUTE) {
             MovieDownloadSitesScreen(model = model, onBack = { navController.popBackStack() })
+        }
+        // "Import a list" on Movies and Music (core/docs/MOVIE_DOWNLOADS.md). A started list
+        // replaces the import screen with that tab's Downloads, where the list's card shows.
+        composable(
+            MEDIA_IMPORT_ROUTE,
+            arguments = listOf(navArgument("kind") { type = NavType.StringType }),
+        ) { entry ->
+            val kind = entry.arguments?.getString("kind") ?: "music"
+            val api = remember(kind) { model.mediaImportApi(kind) }
+            val context = LocalContext.current
+            MediaImportScreen(
+                api = api,
+                onBack = { navController.popBackStack() },
+                onStarted = { message ->
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    navController.navigate(if (kind == "movies") MOVIE_DOWNLOADS_ROUTE else AudioRoutes.ALBUM_DOWNLOADS) {
+                        popUpTo(MEDIA_IMPORT_ROUTE) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(
+            MEDIA_IMPORT_LIST_ROUTE,
+            arguments = listOf(
+                navArgument("kind") { type = NavType.StringType },
+                navArgument("id") { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val kind = entry.arguments?.getString("kind") ?: "music"
+            val api = remember(kind) { model.mediaImportApi(kind) }
+            MediaImportDetailScreen(
+                api = api,
+                id = entry.arguments?.getString("id").orEmpty(),
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(
             route = MOVIE_DETAIL_ROUTE,
@@ -732,6 +778,7 @@ private fun SentinelNavHost(
         }
         composable(AudioRoutes.ADD) { MusicAddScreen() }
         composable(AudioRoutes.ALBUM_DOWNLOADS) { AlbumDownloadsScreen() }
+        composable(AudioRoutes.SUGGESTIONS) { com.sentinelcore.android.ui.music.MusicSuggestionsScreen() }
         composable(AudioRoutes.MUSIC_LIBRARIES) { MusicLibrariesScreen(state, model, onBack = { navController.popBackStack() }) }
         composable(AppSection.PODCASTS.route) { PodcastsScreen(state) }
         composable(AudioRoutes.SHOW) { ShowScreen(it.arguments?.getString("id").orEmpty()) }

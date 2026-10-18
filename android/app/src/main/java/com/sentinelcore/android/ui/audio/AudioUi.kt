@@ -140,6 +140,7 @@ object AudioRoutes {
     const val SMART = "music/smart/{id}"
     const val ADD = "music/add"
     const val ALBUM_DOWNLOADS = "music/album-downloads"
+    const val SUGGESTIONS = "music/suggestions"
     const val SHOW = "podcasts/show/{id}"
     const val EPISODE = "podcasts/episode/{id}"
     const val PREVIEW = "podcasts/preview?feed={feed}&itunes={itunes}"

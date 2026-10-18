@@ -27,7 +27,7 @@ struct MusicTVView: View {
     var body: some View {
         Group {
             switch pane {
-            case .home: MusicHomeTV(isActive: isActive, refreshToken: refreshToken)
+            case .home: MusicHomeTV(isActive: isActive, refreshToken: refreshToken, canDownload: canDownload)
             case .library: MusicLibraryTV()
             case .search: MusicSearchTV()
             case .add: MusicAddTVView()
@@ -88,6 +88,8 @@ struct MusicTVView: View {
 private struct MusicHomeTV: View {
     let isActive: Bool
     let refreshToken: Int
+    // Downloads allowed: "Suggested for You" shows.
+    var canDownload = false
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var audio: AudioCenter
     @State private var home: MusicHome?
@@ -107,6 +109,9 @@ private struct MusicHomeTV: View {
                         MediaShelfTV(title: "Recently Played") {
                             ForEach(Array(recent.enumerated()), id: \.offset) { _, entry in recentTile(entry) }
                         }
+                    }
+                    if canDownload, isActive {
+                        MusicSuggestionsShelfTV()
                     }
                     if let mixes = home.mixes, !mixes.isEmpty {
                         MediaShelfTV(title: "Made for You") {

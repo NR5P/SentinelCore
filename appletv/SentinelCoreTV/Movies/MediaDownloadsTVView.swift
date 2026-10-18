@@ -171,6 +171,8 @@ struct MediaDownloadsTVView: View {
                 Text("Downloading")
             }
 
+            MediaImportListsTVSection(kind: .movies)
+
             if !downloads.recent.isEmpty {
                 Section("Recent") {
                     ForEach(downloads.recent) { row($0) }

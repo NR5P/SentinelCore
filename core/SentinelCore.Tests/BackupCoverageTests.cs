@@ -124,6 +124,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaState"] = "the media scanner's runtime memory",
             ["MediaDownloads"] = "the movie download queue and its history; what it fetched is in the library itself",
             ["MediaImports"] = "imported lists being worked through; what they fetched is in the library itself",
+            ["MusicSuggestionCache"] = "what ListenBrainz said about similar artists; asked again when missing",
+            ["MusicSuggestionDismissals"] = "\"not interested\" taps on music suggestions; cheap to tap again",
             ["AudioNowPlaying"] = "what each device was playing a moment ago; the devices report it again",
             ["AudioSpeakers"] = "speakers re-register every minute while they are switched on",
             ["AudioListenQueue"] = "listens on their way to ListenBrainz; a day at most, and ListenBrainz keeps them",

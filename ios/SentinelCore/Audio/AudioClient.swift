@@ -323,6 +323,21 @@ extension SentinelClient {
         try await audioSend("POST", "/api/music/downloads/\(id)/retry")
     }
 
+    // MARK: "Suggested for you" (MUSIC_AND_PODCASTS.md "Suggestions")
+
+    // Starts a build when there is none (or it is a day old, or `refresh`) and waits up to 2 s
+    // for it; while `state` is working, read again every few seconds.
+    func musicSuggestions(refresh: Bool = false) async throws -> MusicSuggestions {
+        try await audioGet("/api/music/downloads/suggestions",
+                           refresh ? [URLQueryItem(name: "refresh", value: "true")] : [], timeout: 30)
+    }
+
+    // "Not interested": with `title` that one album, without it the whole artist.
+    func dismissMusicSuggestion(artist: String, title: String?) async throws {
+        try await audioSend("POST", "/api/music/downloads/suggestions/dismiss",
+                            MusicSuggestionDismissInput(artist: artist, title: title))
+    }
+
     // MARK: - Podcasts (§6)
 
     func podcastDirectorySearch(_ q: String) async throws -> [DirectoryShow] {

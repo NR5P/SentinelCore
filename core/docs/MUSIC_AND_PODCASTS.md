@@ -443,6 +443,42 @@ a search runs in the background, because starting the VPN can take a minute or t
   own disc folders (`CD1`, `Disc 2`). Only audio, `.cue`, `.log`, `.lrc` and image files are kept.
   The music library is then rescanned, so the album shows up under Recently added.
 
+### Suggestions ("Suggested for you", same `canDownload` gate as "+ Add")
+
+Albums by artists like the ones this person listens to, that are not in the library yet. The
+server weighs who they **love** (artist 6, album 4, track 3), **rate** 4-5 stars, **play**
+(log of plays), put on **their own playlists**, and had on **lists they imported** (Spotify
+likes count even before anything downloads). The top 12 are looked up on MusicBrainz, their
+similar artists come from ListenBrainz (free, open data, no key), artists already in the library
+are skipped, and each remaining artist's best-known studio albums come from ListenBrainz
+popularity (live records, hits collections, singles and EPs left out). Every outside answer is
+cached for 30 days (`MusicSuggestionCache` in media-downloads.db), so only the first build is slow.
+
+- `GET /api/music/downloads/suggestions[?refresh=true]` →
+  ```json
+  { "state": "ready|working|error", "builtAt": "2026-10-18T22:00:00Z"|null, "message": "Couldn't reach ListenBrainz…"|null,
+    "seeds": [ { "artist": "Fleetwood Mac", "reason": "loved|rated|played|playlists|imported|library" } ],
+    "albums": [ { "key": "steely dan|aja", "artist": "Steely Dan", "title": "Aja", "year": 1977,
+                  "mbid": "…release group…", "artUrl": "https://coverartarchive.org/release-group/…/front-250",
+                  "because": ["Fleetwood Mac", "Eagles"], "listens": 900000, "queued": false } ] }
+  ```
+  - Built in the background, per person; the first read (or one more than 24 h after the last
+    build, or `refresh=true`) starts a build and waits up to 2 s for it. While `state` is
+    `working`, show what `albums` already holds (the previous list, or nothing yet) with a
+    spinner and read again every few seconds. `error` keeps the last good `albums` too.
+  - At most 40 albums, two per artist, every artist's best album first. Albums that reach the
+    library drop out on the next read; `queued` = already on one of this person's imported lists
+    or downloading.
+  - `because` = the seeds that led there, best first ("Because you like Fleetwood Mac and Eagles").
+- `POST /api/music/downloads/suggestions/dismiss` with `{ "artist", "title"?, "dismissed"?: true }`
+  → 204. "Not interested": with `title` that one album, without it the whole artist. `dismissed:
+  false` takes it back. The album disappears from the next read at once.
+- **Downloading** is an imported list: `POST /api/music/downloads/imports` with
+  `{ "name": "Suggested for you", "items": [ { "artist", "title", "year" } ] }` (one album for a
+  single "Download" tap, the ticked ones for "Download all"). The server then searches, picks the
+  best seeded release and files it exactly as in "Import a list" (MOVIE_DOWNLOADS.md), and the
+  list shows under Downloads → Imported lists.
+
 ---
 
 ## 5. Podcast objects

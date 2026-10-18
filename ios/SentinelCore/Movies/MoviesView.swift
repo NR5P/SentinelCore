@@ -32,6 +32,7 @@ struct MoviesView: View {
     @StateObject private var downloads = MediaDownloadsTracker()
     @State private var addingDownload = false
     @State private var showingDownloads = false
+    @State private var importingList = false
 
     var body: some View {
         Group {
@@ -89,6 +90,14 @@ struct MoviesView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
+                        importingList = true
+                    } label: {
+                        Label("Import a List", systemImage: "list.bullet.rectangle")
+                    }
+                    .help("Download everything on a Letterboxd or IMDb list")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
                         addingDownload = true
                     } label: {
                         Label("Add", systemImage: "plus")
@@ -99,6 +108,10 @@ struct MoviesView: View {
         }
         .mediaAddSheet(isPresented: $addingDownload, downloads: downloads) { _ in
             showingDownloads = true
+        }
+        .sheet(isPresented: $importingList) {
+            MediaImportSheet(kind: .movies) { _ in showingDownloads = true }
+                .environmentObject(model)
         }
         .task(id: DownloadsKey(active: isActive, server: model.activeServerURL)) {
             guard isActive, !model.activeServerURL.isEmpty else { return }

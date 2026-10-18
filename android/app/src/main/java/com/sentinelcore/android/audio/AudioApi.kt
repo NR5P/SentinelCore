@@ -256,6 +256,14 @@ class AudioApi(private val transport: AudioTransport) {
 
     suspend fun retryMusicDownload(id: String): MediaDownload = parseMediaDownload(obj("POST", "/api/music/downloads/${seg(id)}/retry"))
 
+    // "Suggested for you". `refresh` starts a new build; the server waits up to 2 s for it.
+    suspend fun musicSuggestions(refresh: Boolean = false): MusicSuggestions =
+        parseMusicSuggestions(obj("GET", "/api/music/downloads/suggestions", mapOf("refresh" to if (refresh) "true" else ""), timeoutMillis = 30_000))
+
+    // "Not interested": with `title` that one album, without it the whole artist.
+    suspend fun dismissMusicSuggestion(artist: String, title: String? = null) =
+        send("POST", "/api/music/downloads/suggestions/dismiss", MusicSuggestionsFormat.dismissBody(artist, title))
+
     // ---------------- §6 podcasts ----------------
 
     suspend fun directorySearch(q: String): List<DirectoryShow> = arr("/api/podcasts/directory/search", mapOf("q" to q)).objects(::parseDirectoryShow)

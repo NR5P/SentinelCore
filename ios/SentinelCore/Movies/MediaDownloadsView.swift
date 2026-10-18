@@ -153,6 +153,7 @@ struct MediaDownloadsView: View {
     @ObservedObject var downloads: MediaDownloadsTracker
     @EnvironmentObject private var model: AppModel
     @State private var adding = false
+    @State private var importing = false
     @State private var confirmingCancel: MediaDownload?
     @State private var openRoute: MediaRoute?
     @State private var actionError: String?
@@ -192,6 +193,8 @@ struct MediaDownloadsView: View {
                 Text("Downloading")
             }
 
+            MediaImportListsSection(kind: .movies) { importing = true }
+
             if !downloads.recent.isEmpty {
                 Section("Recent") {
                     ForEach(downloads.recent) { row($0) }
@@ -218,6 +221,10 @@ struct MediaDownloadsView: View {
             MovieDetailView(route: route)
         }
         .mediaAddSheet(isPresented: $adding, downloads: downloads) { _ in }
+        .sheet(isPresented: $importing) {
+            MediaImportSheet(kind: .movies) { _ in }
+                .environmentObject(model)
+        }
         .confirmationDialog(
             "Cancel this download?",
             isPresented: Binding(get: { confirmingCancel != nil }, set: { if !$0 { confirmingCancel = nil } }),

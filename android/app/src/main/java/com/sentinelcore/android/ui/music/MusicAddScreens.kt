@@ -61,6 +61,10 @@ import com.sentinelcore.android.ui.audio.EmptyPanel
 import com.sentinelcore.android.ui.audio.LocalAudioUi
 import com.sentinelcore.android.ui.audio.SectionTitle
 import com.sentinelcore.android.ui.screens.DetailHeader
+import com.sentinelcore.android.ui.screens.ImportListLink
+import com.sentinelcore.android.ui.screens.ImportedListsSection
+import com.sentinelcore.android.ui.screens.mediaImportListRoute
+import com.sentinelcore.android.ui.screens.mediaImportRoute
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
@@ -119,6 +123,9 @@ fun MusicAddScreen() {
             keyboardActions = KeyboardActions(onSearch = { lookup() }),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        if (lookups == null) {
+            ImportListLink("music", onImport = { ui.nav.open(mediaImportRoute("music")) }, modifier = Modifier.padding(horizontal = 16.dp))
+        }
         if (looking) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
         lookupError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
         val list = lookups
@@ -294,16 +301,27 @@ fun AlbumDownloadsScreen() {
     }
     Column(Modifier.fillMaxSize()) {
         DetailHeader("Album downloads", onBack = ui.nav.back) {
+            TextButton(onClick = { ui.nav.open(mediaImportRoute("music")) }) { Text("Import a list") }
             TextButton(onClick = { ui.nav.open(AudioRoutes.ADD) }) { Text("+ Add") }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
         val value = list
         when {
             value == null -> Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator() }
-            value.active.isEmpty() && value.recent.isEmpty() -> EmptyPanel(Icons.Default.Album, "No album downloads", "Use + Add to find an album.")
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (value.active.isEmpty() && value.recent.isEmpty()) {
+                    item { EmptyPanel(Icons.Default.Album, "No album downloads", "Use + Add to find an album.") }
+                }
                 if (value.active.isNotEmpty()) item { SectionTitle("Downloading") }
                 items(value.active, key = { "a" + it.id }) { download -> AlbumDownloadRow(download) { tick++ } }
+                item(key = "imported-lists") {
+                    ImportedListsSection(
+                        ui.runtime.musicImports,
+                        onImport = { ui.nav.open(mediaImportRoute("music")) },
+                        onOpen = { ui.nav.open(mediaImportListRoute("music", it)) },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
                 if (value.recent.isNotEmpty()) item { SectionTitle("Recent") }
                 items(value.recent, key = { "r" + it.id }) { download -> AlbumDownloadRow(download) { tick++ } }
             }

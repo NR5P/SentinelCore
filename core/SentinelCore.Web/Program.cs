@@ -319,6 +319,14 @@ builder.Services.AddHttpClient(MusicDownloadLookup.HttpClientName, client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (self-hosted home media server)");
 });
 builder.Services.AddSingleton<MusicDownloadLookup>();
+// "Suggested for you": similar artists from ListenBrainz (MusicSuggestions.cs).
+builder.Services.AddHttpClient(ListenBrainzMusicSimilarity.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (self-hosted home media server)");
+});
+builder.Services.AddSingleton<IMusicSimilarity, ListenBrainzMusicSimilarity>();
+builder.Services.AddSingleton<MusicSuggestionService>();
 // ---- Podcasts (Podcast*.cs, core/docs/MUSIC_AND_PODCASTS.md §5-6) ----
 // Feeds are fetched with redirects followed by hand (so a permanent move updates the stored
 // address) and gzip/brotli accepted; episode files and the audio relay follow redirects and take

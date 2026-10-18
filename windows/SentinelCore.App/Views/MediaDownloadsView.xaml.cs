@@ -39,12 +39,15 @@ public partial class MediaDownloadsView : UserControl
     // Each download's state at the last poll, to notice the moment one lands or fails.
     private readonly Dictionary<string, string> _states = new();
 
-    public MediaDownloadsView(AppModel model, INavigator? navigator = null, MediaDownloadStatus? status = null)
+    public MediaDownloadsView(AppModel model, INavigator? navigator = null, MediaDownloadStatus? status = null, string? importStartedMessage = null)
     {
         _model = model;
         _navigator = navigator ?? NullNavigator.Instance;
         _status = status ?? MediaDownloadStatus.Off;
         InitializeComponent();
+        var imports = new ImportedListsPanel(model, MediaImportKind.Movies);
+        imports.Say(importStartedMessage);
+        ImportsHost.Content = imports;
         SitesButton.Visibility = _status.ShowsSitesButton ? Visibility.Visible : Visibility.Collapsed;
 
         _poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = PollInterval };

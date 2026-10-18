@@ -28,6 +28,11 @@ public sealed class MusicView : AudioPage
     private readonly TextBlock _status = AudioUi.Caption("Loading the library…");
     private readonly Button _add;
     private readonly Button _downloads;
+    private readonly Button _import;
+    private readonly Button _suggestionsButton;
+
+    // "Suggested for you" on Home: kept, so a status answer arriving after Home has drawn can fill it.
+    private readonly ContentControl _suggestionsRow = new();
     private readonly DispatcherTimer _searchDelay = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private string _tab = "home";
     private string _sort = "";
@@ -43,6 +48,10 @@ public sealed class MusicView : AudioPage
         _add.Visibility = Visibility.Collapsed;
         _downloads = AudioUi.TextButton("Downloads", () => Navigator.Push(new MusicDownloadsView(Model, Navigator), "Album downloads"), "Albums downloading now, and the ones that arrived");
         _downloads.Visibility = Visibility.Collapsed;
+        _import = AudioUi.TextButton("Import a list", OpenImport, "Download everything on a Spotify playlist or library you exported");
+        _import.Visibility = Visibility.Collapsed;
+        _suggestionsButton = AudioUi.TextButton("Suggestions", OpenSuggestions, "Albums by artists like the ones you listen to, not in the library yet");
+        _suggestionsButton.Visibility = Visibility.Collapsed;
 
         var title = new StackPanel();
         title.Children.Add(new TextBlock { Text = "Music", Style = AudioUi.StyleOf("SectionTitle") });
@@ -51,6 +60,8 @@ public sealed class MusicView : AudioPage
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         actions.Children.Add(AudioUi.TextButton("Shuffle all", () => _ = Player.ShuffleAllAsync(), "Shuffle the whole library, favouring what you haven't heard lately"));
         actions.Children.Add(_add);
+        actions.Children.Add(_import);
+        actions.Children.Add(_suggestionsButton);
         actions.Children.Add(_downloads);
         actions.Children.Add(MoreButton());
         actions.Children.Add(_search);
@@ -157,12 +168,28 @@ public sealed class MusicView : AudioPage
         var can = _downloadStatus.CanDownload;
         _add.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
         _downloads.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        _import.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        _suggestionsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        DrawSuggestionsRow();
     }
+
+    // "Suggested for you" (MUSIC_AND_PODCASTS.md "### Suggestions"), only while downloads are allowed.
+    private void OpenSuggestions() => Navigator.Push(new MusicSuggestionsView(Model, Navigator), MusicSuggestionText.Heading);
+
+    private void DrawSuggestionsRow() =>
+        _suggestionsRow.Content = _downloadStatus.CanDownload ? new MusicSuggestionsShelf(Model, Navigator, Scroller) : null;
 
     private void OpenAdd()
     {
         var window = new MusicAddWindow(Model, _downloadStatus) { Owner = Window.GetWindow(this) };
         if (window.ShowDialog() == true) Navigator.Push(new MusicDownloadsView(Model, Navigator), "Album downloads");
+    }
+
+    // "Import a list" (MOVIE_DOWNLOADS.md "Import a list"): once started, Downloads shows its progress.
+    private void OpenImport()
+    {
+        var window = new MediaImportWindow(Model, MediaImportKind.Music) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() == true) Navigator.Push(new MusicDownloadsView(Model, Navigator, window.StartedMessage), "Album downloads");
     }
 
     // ---------------------------------------------------------------- Loading
@@ -271,6 +298,8 @@ public sealed class MusicView : AudioPage
         Add(AudioUi.Shelf("Pinned", home.Pinned.Select(PlaylistCard), Scroller));
         Add(AudioUi.Shelf("Recently played", home.RecentlyPlayed.Select(RecentCard).OfType<UIElement>(), Scroller));
         Add(AudioUi.Shelf("Mixes for you", home.Mixes.Select(MixCard), Scroller));
+        DrawSuggestionsRow();
+        Host.Children.Add(_suggestionsRow);
         Add(AudioUi.Shelf("Recently added", home.RecentlyAdded.Select(AlbumCard), Scroller));
         Add(AudioUi.Shelf("Heavy rotation", home.HeavyRotation.Select(AlbumCard), Scroller));
         if (home.OnThisDay is { Tracks.Count: > 0 } day)

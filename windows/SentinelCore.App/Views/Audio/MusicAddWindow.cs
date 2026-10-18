@@ -218,8 +218,16 @@ public sealed class MusicDownloadsView : AudioPage
 {
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(3) };
 
-    public MusicDownloadsView(AppModel model, INavigator navigator) : base(model, navigator)
+    // The downloads, rebuilt on every poll, then the imported lists, which keep themselves current.
+    private readonly StackPanel _list = new();
+    private readonly ImportedListsPanel _imports;
+
+    public MusicDownloadsView(AppModel model, INavigator navigator, string? startedMessage = null) : base(model, navigator)
     {
+        _imports = new ImportedListsPanel(model, MediaImportKind.Music);
+        _imports.Say(startedMessage);
+        Host.Children.Add(_list);
+        Host.Children.Add(_imports);
         _poll.Tick += async (_, _) => await LoadAsync();
         Loaded += async (_, _) =>
         {
@@ -234,15 +242,15 @@ public sealed class MusicDownloadsView : AudioPage
         try
         {
             var list = await Model.Client.MusicDownloadsAsync();
-            Host.Children.Clear();
-            Host.Children.Add(AudioUi.Title("Album downloads"));
-            if (MediaDownloadText.VpnLook(list.Status) is { } look) Host.Children.Add(AudioUi.Caption(look.Text, 4));
-            Host.Children.Add(AudioUi.Heading("Downloading"));
-            if (list.Active.Count == 0) Host.Children.Add(AudioUi.Caption("Nothing downloading."));
-            foreach (var download in list.Active) Host.Children.Add(Row(download));
-            Host.Children.Add(AudioUi.Heading("Recent"));
-            if (list.Recent.Count == 0) Host.Children.Add(AudioUi.Caption("Nothing yet."));
-            foreach (var download in list.Recent) Host.Children.Add(Row(download));
+            _list.Children.Clear();
+            _list.Children.Add(AudioUi.Title("Album downloads"));
+            if (MediaDownloadText.VpnLook(list.Status) is { } look) _list.Children.Add(AudioUi.Caption(look.Text, 4));
+            _list.Children.Add(AudioUi.Heading("Downloading"));
+            if (list.Active.Count == 0) _list.Children.Add(AudioUi.Caption("Nothing downloading."));
+            foreach (var download in list.Active) _list.Children.Add(Row(download));
+            _list.Children.Add(AudioUi.Heading("Recent"));
+            if (list.Recent.Count == 0) _list.Children.Add(AudioUi.Caption("Nothing yet."));
+            foreach (var download in list.Recent) _list.Children.Add(Row(download));
             Notice(null);
         }
         catch (Exception error)

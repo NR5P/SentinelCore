@@ -15,7 +15,7 @@ window.SentinelMusic = (function () {
 
   const GRID_PAGE = 60;
   const SONG_PAGE = 100;
-  const NAV = ["home", "artists", "albums", "songs", "genres", "playlists", "folders", "stats", "downloads"];
+  const NAV = ["home", "artists", "albums", "songs", "genres", "playlists", "folders", "stats", "suggestions", "downloads"];
   const PHASES = { files: "finding files", tags: "reading tags", artwork: "fetching artwork", lyrics: "fetching lyrics" };
 
   let visible = false;
@@ -104,6 +104,7 @@ window.SentinelMusic = (function () {
         case "folders": await renderFolders(token, r.id || ""); break;
         case "stats": renderStats(); break;
         case "downloads": await renderDownloads(token); break;
+        case "suggestions": await renderSuggestions(token); break;
         case "album": await renderAlbum(r.id, token); break;
         case "artist": await renderArtist(r.id, token); break;
         case "playlist": await renderPlaylist(r.id, token); break;
@@ -414,6 +415,7 @@ window.SentinelMusic = (function () {
       rowMarkup("pinned", "Pinned", rowFor("pinned", d.pinned), playlistCard),
       rowMarkup("recent", "Recently played", rowFor("recent", d.recentlyPlayed), recentCard),
       rowMarkup("mixes", "Made for you", rowFor("mixes", d.mixes), mixCard),
+      `<div id="mu-sugg-row">${suggestionRowMarkup()}</div>`,
       rowMarkup("added", "Recently added", rowFor("added", d.recentlyAdded), albumCard),
       rowMarkup("heavy", "Heavy rotation", rowFor("heavy", d.heavyRotation), albumCard),
       onThisDay ? rowMarkup("onthisday", `On this day &middot; <span class="au-row-sub">${h(onThisDay.label || "")}</span>`, rowFor("onthisday", onThisDay.tracks), trackCard("onthisday"), rowPlayAll("onthisday")) : "",
@@ -425,6 +427,9 @@ window.SentinelMusic = (function () {
     const scanning = status && status.scanning;
     const empty = rows.replace(/\s/g, "") ? "" : emptyMarkup(scanning ? "Reading your music…" : "Nothing played yet", scanning ? "The first scan is still running - albums appear as it finds them." : "Play something from Albums or Songs and this page fills up.", ICON.note);
     setContent(`<div class="au-home">${head}${notices()}${dlBanner()}${rows}${empty}</div>`);
+    (dl.status ? Promise.resolve() : refreshDownloadStatus()).then(() => {
+      if (token === routeToken && dl.status && dl.status.canDownload) loadSuggestions(false);
+    });
   }
 
   function rowPlayAll(key) {
@@ -1233,7 +1238,7 @@ window.SentinelMusic = (function () {
     dl.status = res.ok ? res.data : null;
     const can = !!(dl.status && dl.status.canDownload);
     el("mu-add-btn").classList.toggle("hidden", !can);
-    for (const b of document.querySelectorAll('#mu-subtabs [data-mu-nav="downloads"]')) b.classList.toggle("hidden", !can);
+    for (const b of document.querySelectorAll('#mu-subtabs [data-mu-nav="downloads"], #mu-subtabs [data-mu-nav="suggestions"]')) b.classList.toggle("hidden", !can);
     if (can && !dl.list) pollDownloads(true);
   }
 
@@ -1496,6 +1501,168 @@ window.SentinelMusic = (function () {
     go({ name: "downloads" });
   }
 
+  // ---- suggestions ("Suggested for you", MUSIC_AND_PODCASTS.md §4 "Suggestions") --------------
+  // Albums by artists like the ones this person loves, plays and imported, not in the library
+  // yet. Downloading one is an imported list named "Suggested for you".
+
+  const sugg = { data: null, timer: null, ticked: new Set(), busy: false };
+  const SUGG_EMPTY = "Love some songs or albums, or import your Spotify likes, and suggestions will show up here.";
+
+  function suggestionAlbums() {
+    return (sugg.data && Array.isArray(sugg.data.albums)) ? sugg.data.albums : [];
+  }
+
+  function joinNames(names) {
+    const list = (names || []).filter(Boolean);
+    if (list.length <= 1) return list.join("");
+    return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  }
+
+  function becauseLine(a) {
+    return a.queued ? "On its way" : a.because && a.because.length ? `Because you like ${joinNames(a.because)}` : "";
+  }
+
+  function basedOnLine() {
+    const seeds = ((sugg.data && sugg.data.seeds) || []).map((s) => s.artist);
+    if (!seeds.length) return "";
+    return `Based on: ${seeds.slice(0, 5).join(", ")}${seeds.length > 5 ? "…" : ""}`;
+  }
+
+  async function loadSuggestions(refresh) {
+    clearTimeout(sugg.timer);
+    if (refresh && sugg.data) { sugg.data.state = "working"; redrawSuggestions(); }
+    const res = await request(`/api/music/downloads/suggestions${refresh ? "?refresh=true" : ""}`);
+    if (res.ok && res.data) sugg.data = res.data;
+    else sugg.data = { ...(sugg.data || { albums: [], seeds: [] }), state: "error", message: res.error };
+    const keys = new Set(suggestionAlbums().map((a) => a.key));
+    for (const k of [...sugg.ticked]) if (!keys.has(k)) sugg.ticked.delete(k);
+    redrawSuggestions();
+    if (sugg.data.state === "working" && visible && ["home", "suggestions"].includes(route.name))
+      sugg.timer = setTimeout(() => loadSuggestions(false), 3000);
+  }
+
+  function redrawSuggestions() {
+    if (!visible) return;
+    if (route.name === "suggestions") drawSuggestions();
+    const row = el("mu-sugg-row");
+    if (route.name === "home" && row) { row.innerHTML = suggestionRowMarkup(); wireImages(row); wireRows(row); }
+  }
+
+  function suggestionCard(a) {
+    return `<div class="au-card mu-sg-card">
+      <div class="au-card-art-wrap">
+        <button type="button" class="au-card-art" data-act="open-suggestions" title="${h(a.title)}">${art(a.artUrl, "au-square", a.title, a.artist)}</button>
+      </div>
+      <button type="button" class="au-card-text" data-act="open-suggestions">
+        <span class="mv-card-title">${h(a.title)}</span>
+        <span class="mv-card-sub">${h([a.artist, a.year].filter(Boolean).join(" · "))}</span>
+        <span class="mv-card-sub mu-sg-why ${a.queued ? "mu-sg-queued" : ""}">${h(becauseLine(a))}</span>
+      </button>
+    </div>`;
+  }
+
+  function suggestionRowMarkup() {
+    if (!dl.status || !dl.status.canDownload || !sugg.data) return "";
+    const albums = suggestionAlbums();
+    const more = `<button type="button" class="au-row-action" data-act="open-suggestions"><span>see all</span>${ICON.right}</button>`;
+    if (!albums.length) {
+      if (sugg.data.state !== "working") return "";
+      return `<section class="mv-row au-row"><div class="au-row-head"><h3 class="mv-row-title">Suggested for you</h3></div>
+        <div class="mu-sg-note"><span class="mv-pulse"></span> Finding albums you might like…</div></section>`;
+    }
+    return rowMarkup("sugg", "Suggested for you", albums.slice(0, 20), suggestionCard, more);
+  }
+
+  async function renderSuggestions(token) {
+    el("mu-content").dataset.built = "";
+    if (!dl.status) await refreshDownloadStatus();
+    if (token !== routeToken) return;
+    if (!dl.status || !dl.status.canDownload) {
+      setContent(emptyMarkup("Suggestions are off", "They download through the same VPN and torrent setup as Movies - turn on Movie Downloads in Settings.", ICON.download));
+      return;
+    }
+    if (!sugg.data) setContent(loadingMarkup());
+    else drawSuggestions();
+    await loadSuggestions(false);
+  }
+
+  function drawSuggestions() {
+    const d = sugg.data || { albums: [], seeds: [], state: "working" };
+    const albums = suggestionAlbums();
+    const working = d.state === "working";
+    const rows = albums.map((a) => `<div class="mi-row mu-sg-row">
+        <input type="checkbox" data-sugg-tick="${h(a.key)}" ${sugg.ticked.has(a.key) ? "checked" : ""} ${a.queued ? "disabled" : ""} aria-label="Tick ${h(a.title)}">
+        <div class="mu-sg-art">${art(a.artUrl, "au-square", a.title, a.artist)}</div>
+        <span class="mi-row-text">
+          <span class="mi-row-title">${h(a.title)}${a.year ? ` <span class="mv-match-year-tag">${h(a.year)}</span>` : ""}</span>
+          <span class="mi-row-sub">${h(a.artist)}</span>
+          <span class="mi-row-sub mu-sg-why">${h(becauseLine({ ...a, queued: false }))}</span>
+          <span class="mu-sg-links">
+            <button type="button" class="mv-link" data-act="sugg-dismiss" data-key="${h(a.key)}">not interested</button>
+            <button type="button" class="mv-link" data-act="sugg-dismiss-artist" data-key="${h(a.key)}">not interested in ${h(a.artist)}</button>
+          </span>
+        </span>
+        ${a.queued ? `<span class="mi-row-state mu-sg-queued">on its way</span>`
+          : `<button type="button" class="mv-btn" data-act="sugg-download" data-key="${h(a.key)}">${ICON.download}<span>download</span></button>`}
+      </div>`).join("");
+    const status = working ? `<div class="mu-sg-note"><span class="mv-pulse"></span> Finding albums you might like… the first time takes about a minute.</div>`
+      : d.state === "error" ? `<div class="mv-note mv-note-warn">${h(d.message || "Couldn't work out suggestions.")}</div>` : "";
+    setContent(`<div class="mu-sg">
+      <div class="mu-sg-head">
+        <div><h2 class="mv-row-title">Suggested for you</h2><div class="mu-sg-based">${h(basedOnLine())}</div></div>
+        <div class="mv-actions">
+          <button type="button" class="mv-btn mv-btn-glass" data-act="sugg-refresh" ${working ? "disabled" : ""}>${ICON.refresh}<span>refresh</span></button>
+        </div>
+      </div>
+      ${status}
+      ${albums.length ? `<div class="mi-tools">
+          <button type="button" class="mv-link" data-act="sugg-all">all</button>
+          <button type="button" class="mv-link" data-act="sugg-none">none</button>
+          <button type="button" class="mv-btn mv-btn-primary" data-act="sugg-download-ticked" id="mu-sg-ticked"></button>
+        </div>
+        <div class="mu-sg-list">${rows}</div>
+        <p class="mv-modal-intro">Each album is searched for on your sites through the VPN and the best shared copy is downloaded, a few at a time. Watch them under Downloads → Imported lists.</p>`
+        : working ? "" : emptyMarkup("No suggestions yet", SUGG_EMPTY, ICON.note)}
+    </div>`);
+    updateSuggestionTicked();
+  }
+
+  function updateSuggestionTicked() {
+    const button = el("mu-sg-ticked");
+    if (!button) return;
+    const n = sugg.ticked.size;
+    button.disabled = n === 0 || sugg.busy;
+    button.innerHTML = `${ICON.download}<span>${sugg.busy ? "starting…" : `download ticked (${n})`}</span>`;
+  }
+
+  async function downloadSuggestions(keys) {
+    const albums = suggestionAlbums().filter((a) => keys.includes(a.key) && !a.queued);
+    if (!albums.length || sugg.busy) return;
+    sugg.busy = true;
+    updateSuggestionTicked();
+    const res = await request("/api/music/downloads/imports", { method: "POST", body: {
+      name: "Suggested for you",
+      items: albums.map((a) => ({ artist: a.artist, title: a.title, year: a.year || null }))
+    } });
+    sugg.busy = false;
+    if (!res.ok) { updateSuggestionTicked(); showToast(res.error, false); return; }
+    for (const a of albums) { a.queued = true; sugg.ticked.delete(a.key); }
+    showToast(albums.length === 1 ? `${albums[0].title} is on its way. Watch it under Downloads.` : `${plural(albums.length, "album")} on their way. Watch them under Downloads.`, true);
+    redrawSuggestions();
+  }
+
+  async function dismissSuggestion(key, wholeArtist) {
+    const album = suggestionAlbums().find((a) => a.key === key);
+    if (!album) return;
+    const body = wholeArtist ? { artist: album.artist } : { artist: album.artist, title: album.title };
+    const res = await request("/api/music/downloads/suggestions/dismiss", { method: "POST", body });
+    if (!res.ok) { showToast(res.error, false); return; }
+    sugg.data.albums = suggestionAlbums().filter((a) => wholeArtist ? a.artist !== album.artist : a.key !== key);
+    for (const k of [...sugg.ticked]) if (!sugg.data.albums.some((a) => a.key === k)) sugg.ticked.delete(k);
+    showToast(wholeArtist ? `No more ${album.artist}` : `${album.title} won't be suggested again`, true);
+    redrawSuggestions();
+  }
+
   // ---- modal actions --------------------------------------------------------------------------
 
   U.onModalAction((act, target) => {
@@ -1622,11 +1789,24 @@ window.SentinelMusic = (function () {
           break;
         }
         case "dl-add": openAdd(); break;
+        case "open-suggestions": go({ name: "suggestions" }); break;
+        case "sugg-refresh": loadSuggestions(true); break;
+        case "sugg-download": downloadSuggestions([target.dataset.key]); break;
+        case "sugg-download-ticked": downloadSuggestions([...sugg.ticked]); break;
+        case "sugg-all": for (const a of suggestionAlbums()) if (!a.queued) sugg.ticked.add(a.key); drawSuggestions(); break;
+        case "sugg-none": sugg.ticked.clear(); drawSuggestions(); break;
+        case "sugg-dismiss": dismissSuggestion(target.dataset.key, false); break;
+        case "sugg-dismiss-artist": dismissSuggestion(target.dataset.key, true); break;
         case "dl-cancel": case "dl-retry": case "dl-remove": downloadAction(act, id, target); break;
         default: break;
       }
     });
     view.addEventListener("change", (e) => {
+      if (e.target.matches("[data-sugg-tick]")) {
+        if (e.target.checked) sugg.ticked.add(e.target.dataset.suggTick); else sugg.ticked.delete(e.target.dataset.suggTick);
+        updateSuggestionTicked();
+        return;
+      }
       const bar = e.target.closest("[data-browse]");
       if (!bar || !e.target.dataset.f || e.target.dataset.f === "q") return;
       const s = browse[bar.dataset.browse];
