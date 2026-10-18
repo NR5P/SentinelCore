@@ -378,7 +378,7 @@ builder.Services.AddSingleton<AutoUpdateWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoUpdateWorker>());
 // The family file library, its backup drives and the nightly duplicate check - see
 // FamilyFiles.cs. The library folder is a setting; everything else sits under the data directory.
-builder.Services.AddSingleton(sp => new FamilyFilesLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>()));
+builder.Services.AddSingleton(sp => new FamilyFilesLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>(), sp.GetRequiredService<MediaNetworkFileSystem>()));
 builder.Services.AddSingleton(sp => new FamilyFilesIndex(sp.GetRequiredService<FamilyFilesLocations>().IndexFile));
 builder.Services.AddSingleton(sp => new FamilyFilesTrash(sp.GetRequiredService<FamilyFilesLocations>().Trash));
 builder.Services.AddSingleton(sp => new FamilyDriveStore(sp.GetRequiredService<FamilyFilesLocations>().DrivesFile));

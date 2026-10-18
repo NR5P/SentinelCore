@@ -125,8 +125,9 @@ public sealed record FamilyFolderEntry(string Path, string Name);
 public sealed record FamilyFolderListing(string Path, IReadOnlyList<FamilyFolderEntry> Folders, IReadOnlyList<FamilyFileEntry> Files);
 
 // Where everything lives. The library folder is a setting (a household with a big disk points it
-// there); the index, trash and state stay under the data directory regardless.
-public sealed class FamilyFilesLocations(string dataDirectory, AppSettingsFile settings)
+// there, or at a shared folder on another computer); the index, trash and state stay under the
+// data directory regardless.
+public sealed class FamilyFilesLocations(string dataDirectory, AppSettingsFile settings, MediaNetworkFileSystem? network = null)
 {
     public string DefaultLibrary { get; } = Path.Combine(dataDirectory, "family-files", "library");
     public string Trash { get; } = Path.Combine(dataDirectory, "family-files", "trash");
@@ -136,20 +137,29 @@ public sealed class FamilyFilesLocations(string dataDirectory, AppSettingsFile s
     public string Thumbnails { get; } = Path.Combine(dataDirectory, "family-files", "thumbnails");
     public string Work { get; } = Path.Combine(dataDirectory, "family-files", "work");
 
+    public MediaNetworkFileSystem? Network => network;
+
     public async Task<FamilyFilesSettingsDto> OptionsAsync(CancellationToken ct) =>
         await settings.GetSectionAsync<FamilyFilesSettingsDto>(FamilyFilesSettingsDto.SectionName, ct) ?? new FamilyFilesSettingsDto();
 
-    public async Task<string> LibraryAsync(CancellationToken ct)
+    public async Task<string> LibraryAsync(CancellationToken ct) => (await StoreAsync(ct)).Root;
+
+    public async Task<IFamilyLibraryStore> StoreAsync(CancellationToken ct) => StoreFor((await OptionsAsync(ct)).LibraryFolder);
+
+    public IFamilyLibraryStore StoreFor(string? location)
     {
-        var options = await OptionsAsync(ct);
-        var folder = options.LibraryFolder?.Trim();
-        return string.IsNullOrEmpty(folder) || !Path.IsPathRooted(folder) ? DefaultLibrary : folder;
+        var normalized = FamilyLibraryLocation.Normalize(location, out _);
+        if (string.IsNullOrEmpty(normalized)) return new LocalFamilyLibraryStore(DefaultLibrary);
+        if (FamilyLibraryLocation.IsNetwork(normalized))
+            return new NetworkFamilyLibraryStore(normalized, network ?? throw new InvalidOperationException("Network libraries need the network file system."));
+        return new LocalFamilyLibraryStore(normalized);
     }
 }
 
 // Cached SHA-256 of every file in the library, keyed by relative path and trusted only while the
 // file's size and modification time still match - so a nightly pass over a library that hasn't
-// changed reads no file contents at all, and one that has only reads what's new.
+// changed reads no file contents at all, and one that has only reads what's new. That matters
+// twice over for a library on another computer, where every byte read crosses the network.
 public sealed class FamilyFilesIndex(string path)
 {
     public sealed record Entry(long Size, long ModifiedTicks, string Sha256);
@@ -176,33 +186,33 @@ public sealed class FamilyFilesIndex(string path)
         return _entries ??= new Dictionary<string, Entry>(StringComparer.Ordinal);
     }
 
-    public async Task<string?> KnownHashAsync(string relative, FileInfo file, CancellationToken ct)
+    public async Task<string?> KnownHashAsync(FamilyStoreEntry file, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
         {
             var entries = await EntriesAsync(ct);
-            return entries.TryGetValue(relative, out var entry) && Matches(entry, file) ? entry.Sha256 : null;
+            return entries.TryGetValue(file.Path, out var entry) && Matches(entry, file) ? entry.Sha256 : null;
         }
         finally { _lock.Release(); }
     }
 
     // The file's hash, computed and remembered if the index doesn't already know it.
-    public async Task<string> HashAsync(string relative, FileInfo file, CancellationToken ct)
+    public async Task<string> HashAsync(IFamilyLibraryStore store, FamilyStoreEntry file, CancellationToken ct)
     {
-        if (await KnownHashAsync(relative, file, ct) is { } known) return known;
-        var hash = await ComputeAsync(file.FullName, ct);
-        await RememberAsync(relative, file, hash, ct);
+        if (await KnownHashAsync(file, ct) is { } known) return known;
+        var hash = await ComputeAsync(store, file.Path, ct);
+        await RememberAsync(file, hash, ct);
         return hash;
     }
 
-    public async Task RememberAsync(string relative, FileInfo file, string hash, CancellationToken ct)
+    public async Task RememberAsync(FamilyStoreEntry file, string hash, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
         {
             var entries = await EntriesAsync(ct);
-            entries[relative] = new Entry(file.Length, file.LastWriteTimeUtc.Ticks, hash);
+            entries[file.Path] = new Entry(file.Size, file.ModifiedUtc.Ticks, hash);
         }
         finally { _lock.Release(); }
     }
@@ -225,15 +235,23 @@ public sealed class FamilyFilesIndex(string path)
         finally { _lock.Release(); }
     }
 
+    // A library pointed somewhere else (another disk, another computer) starts with no hashes
+    // that could be trusted - paths alone can't tell the two apart.
+    public async Task ClearAsync(CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try { (await EntriesAsync(ct)).Clear(); }
+        finally { _lock.Release(); }
+        await SaveAsync(ct);
+    }
+
     // Walks the whole library: hashes anything new or changed, drops anything gone, saves, and
     // returns every file with its hash. `progress` gets (done, total) as it goes.
-    public async Task<IReadOnlyList<FamilyFileEntry>> RescanAsync(string root, Action<int, int>? progress, CancellationToken ct)
+    public async Task<IReadOnlyList<FamilyFileEntry>> RescanAsync(IFamilyLibraryStore store, Action<int, int>? progress, CancellationToken ct)
     {
-        var files = Directory.Exists(root)
-            ? new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories)
-                .Where(f => !FamilyFilesLibrary.IsHiddenOrPartial(f.Name))
-                .ToList()
-            : [];
+        var files = await Task.Run(() => store.Walk("")
+            .Where(f => !FamilyFilesLibrary.IsHiddenOrPartial(f.Name) && FamilyFilePaths.Normalize(f.Path) == f.Path)
+            .ToList(), ct);
 
         var result = new List<FamilyFileEntry>(files.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -241,17 +259,15 @@ public sealed class FamilyFilesIndex(string path)
         foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested();
-            var relative = FamilyFilePaths.FromDisk(root, file.FullName);
-            if (FamilyFilePaths.Normalize(relative) != relative) { done++; continue; }
-            seen.Add(relative);
+            seen.Add(file.Path);
             string hash;
             try
             {
-                hash = await HashAsync(relative, file, ct);
+                hash = await HashAsync(store, file, ct);
             }
             catch (IOException) { done++; continue; }
             catch (UnauthorizedAccessException) { done++; continue; }
-            result.Add(new FamilyFileEntry(relative, file.Name, file.Length, file.LastWriteTimeUtc, hash, FamilyFilePaths.IsImage(file.Name)));
+            result.Add(new FamilyFileEntry(file.Path, file.Name, file.Size, file.ModifiedUtc, hash, FamilyFilePaths.IsImage(file.Name)));
             progress?.Invoke(++done, files.Count);
         }
 
@@ -282,12 +298,12 @@ public sealed class FamilyFilesIndex(string path)
         finally { _lock.Release(); }
     }
 
-    private static bool Matches(Entry entry, FileInfo file) =>
-        entry.Size == file.Length && entry.ModifiedTicks == file.LastWriteTimeUtc.Ticks;
+    private static bool Matches(Entry entry, FamilyStoreEntry file) =>
+        entry.Size == file.Size && entry.ModifiedTicks == file.ModifiedUtc.Ticks;
 
-    public static async Task<string> ComputeAsync(string fullPath, CancellationToken ct)
+    public static async Task<string> ComputeAsync(IFamilyLibraryStore store, string relative, CancellationToken ct)
     {
-        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
+        await using var stream = await Task.Run(() => store.OpenRead(relative), ct);
         var hash = await SHA256.HashDataAsync(stream, ct);
         return Convert.ToHexStringLower(hash);
     }
@@ -302,79 +318,79 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
 
     public Task<string> RootAsync(CancellationToken ct) => locations.LibraryAsync(ct);
 
+    public Task<IFamilyLibraryStore> StoreAsync(CancellationToken ct) => locations.StoreAsync(ct);
+
     public async Task<FamilyFolderListing?> ListAsync(string folder, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        var disk = FamilyFilePaths.ToDisk(root, folder);
-        if (folder.Length == 0) Directory.CreateDirectory(disk);
-        if (!Directory.Exists(disk)) return null;
-
-        var directory = new DirectoryInfo(disk);
-        var folders = directory.EnumerateDirectories()
-            .Where(d => !d.Name.StartsWith('.') && FamilyFilePaths.IsValidName(d.Name))
-            .Select(d => new FamilyFolderEntry(FamilyFilePaths.Combine(folder, d.Name), d.Name))
-            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var files = new List<FamilyFileEntry>();
-        foreach (var file in directory.EnumerateFiles().Where(f => !IsHiddenOrPartial(f.Name) && FamilyFilePaths.IsValidName(f.Name)))
+        var store = await StoreAsync(ct);
+        return await Task.Run(async () =>
         {
-            var relative = FamilyFilePaths.Combine(folder, file.Name);
-            files.Add(new FamilyFileEntry(relative, file.Name, file.Length, file.LastWriteTimeUtc,
-                await index.KnownHashAsync(relative, file, ct), FamilyFilePaths.IsImage(file.Name)));
-        }
-        files.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-        return new FamilyFolderListing(folder, folders, files);
+            if (folder.Length == 0) store.CreateFolder("");
+            if (store.List(folder) is not { } entries) return null;
+
+            var folders = entries
+                .Where(e => e.IsFolder && !e.Name.StartsWith('.') && FamilyFilePaths.IsValidName(e.Name))
+                .Select(e => new FamilyFolderEntry(e.Path, e.Name))
+                .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var files = new List<FamilyFileEntry>();
+            foreach (var file in entries.Where(e => !e.IsFolder && !IsHiddenOrPartial(e.Name) && FamilyFilePaths.IsValidName(e.Name)))
+                files.Add(new FamilyFileEntry(file.Path, file.Name, file.Size, file.ModifiedUtc,
+                    await index.KnownHashAsync(file, ct), FamilyFilePaths.IsImage(file.Name)));
+            files.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            return new FamilyFolderListing(folder, folders, files);
+        }, ct);
     }
 
     // Every file under a folder (or the whole library), newest first, optionally filtered by a
     // word in the name. What the apps' search box and "recent" list read.
     public async Task<IReadOnlyList<FamilyFileEntry>> SearchAsync(string? query, int limit, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        if (!Directory.Exists(root)) return [];
+        var store = await StoreAsync(ct);
         var words = (query ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var matches = new List<FamilyFileEntry>();
-        foreach (var file in new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories))
-        {
-            if (IsHiddenOrPartial(file.Name)) continue;
-            var relative = FamilyFilePaths.FromDisk(root, file.FullName);
-            if (FamilyFilePaths.Normalize(relative) != relative) continue;
-            if (words.Length > 0 && !words.All(w => relative.Contains(w, StringComparison.OrdinalIgnoreCase))) continue;
-            matches.Add(new FamilyFileEntry(relative, file.Name, file.Length, file.LastWriteTimeUtc, null, FamilyFilePaths.IsImage(file.Name)));
-        }
-        return matches.OrderByDescending(f => f.ModifiedUtc).Take(limit).ToList();
+        return await Task.Run(() => store.Walk("")
+            .Where(f => !IsHiddenOrPartial(f.Name) && FamilyFilePaths.Normalize(f.Path) == f.Path)
+            .Where(f => words.Length == 0 || words.All(w => f.Path.Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .Select(f => new FamilyFileEntry(f.Path, f.Name, f.Size, f.ModifiedUtc, null, FamilyFilePaths.IsImage(f.Name)))
+            .OrderByDescending(f => f.ModifiedUtc)
+            .Take(limit)
+            .ToList(), ct);
     }
 
     public async Task<(int Files, long Bytes)> TotalsAsync(CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        if (!Directory.Exists(root)) return (0, 0);
-        var count = 0;
-        long bytes = 0;
-        foreach (var file in new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories))
+        var store = await StoreAsync(ct);
+        return await Task.Run(() =>
         {
-            if (IsHiddenOrPartial(file.Name)) continue;
-            count++;
-            bytes += file.Length;
-        }
-        return (count, bytes);
+            var count = 0;
+            long bytes = 0;
+            foreach (var file in store.Walk(""))
+            {
+                if (IsHiddenOrPartial(file.Name)) continue;
+                count++;
+                bytes += file.Size;
+            }
+            return (count, bytes);
+        }, ct);
     }
 
-    public async Task<FileInfo?> FindAsync(string relative, CancellationToken ct)
+    public async Task<FamilyStoreEntry?> FindAsync(string relative, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        var file = new FileInfo(FamilyFilePaths.ToDisk(root, relative));
-        return file.Exists && !IsHiddenOrPartial(file.Name) ? file : null;
+        var store = await StoreAsync(ct);
+        var file = await Task.Run(() => store.Stat(relative), ct);
+        return file is { IsFolder: false } && !IsHiddenOrPartial(file.Name) ? file : null;
     }
 
     public async Task<bool> CreateFolderAsync(string relative, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        var disk = FamilyFilePaths.ToDisk(root, relative);
-        if (File.Exists(disk)) return false;
-        Directory.CreateDirectory(disk);
-        return true;
+        var store = await StoreAsync(ct);
+        return await Task.Run(() =>
+        {
+            if (store.Stat(relative) is { IsFolder: false }) return false;
+            store.CreateFolder(relative);
+            return true;
+        }, ct);
     }
 
     public sealed record SaveResult(string Path, long Size, string Sha256, bool AlreadyThere);
@@ -385,17 +401,17 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
     // so nothing anyone put in the library is ever overwritten by a later upload.
     public async Task<SaveResult> SaveAsync(string folder, string name, Stream content, long maxBytes, DateTimeOffset? modified, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
-        var directory = FamilyFilePaths.ToDisk(root, folder);
-        Directory.CreateDirectory(directory);
+        var store = await StoreAsync(ct);
+        await Task.Run(() => store.CreateFolder(folder), ct);
 
-        var temporary = Path.Combine(directory, $".upload-{Guid.NewGuid():N}.part");
+        var temporary = FamilyFilePaths.Combine(folder, $".upload-{Guid.NewGuid():N}.part");
+        var placed = false;
         try
         {
             long total = 0;
             string hash;
             using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-            await using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
+            await using (var output = await Task.Run(() => store.CreateNew(temporary), ct))
             {
                 var buffer = new byte[1 << 16];
                 int read;
@@ -410,84 +426,85 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
                 hash = Convert.ToHexStringLower(sha.GetHashAndReset());
             }
 
-            var wanted = FamilyFilePaths.Combine(folder, name);
-            var existing = new FileInfo(FamilyFilePaths.ToDisk(root, wanted));
-            if (existing.Exists && existing.Length == total && await index.HashAsync(wanted, existing, ct) == hash)
-                return new SaveResult(wanted, total, hash, AlreadyThere: true);
-
-            var final = FamilyFilePaths.NextFreeName(folder, name, candidate => File.Exists(FamilyFilePaths.ToDisk(root, candidate)));
-            var target = FamilyFilePaths.ToDisk(root, final);
-            if (modified is { } stamp)
+            return await Task.Run(async () =>
             {
-                try { File.SetLastWriteTimeUtc(temporary, stamp.UtcDateTime); }
-                catch (IOException) { }
-            }
-            File.Move(temporary, target);
-            await index.RememberAsync(final, new FileInfo(target), hash, ct);
-            return new SaveResult(final, total, hash, AlreadyThere: false);
+                if (store.Stat(temporary)?.Size != total)
+                    throw new IOException(store.IsNetwork ? "The file came out a different size on the other computer - its disk may be full." : "The file came out a different size - the disk may be full.");
+
+                var wanted = FamilyFilePaths.Combine(folder, name);
+                if (store.Stat(wanted) is { IsFolder: false } existing && existing.Size == total && await index.HashAsync(store, existing, ct) == hash)
+                    return new SaveResult(wanted, total, hash, AlreadyThere: true);
+
+                var final = FamilyFilePaths.NextFreeName(folder, name, candidate => store.Stat(candidate) is not null);
+                if (modified is { } stamp) store.SetModified(temporary, stamp.UtcDateTime);
+                store.Move(temporary, final);
+                placed = true;
+                if (store.Stat(final) is { } landed) await index.RememberAsync(landed, hash, ct);
+                return new SaveResult(final, total, hash, AlreadyThere: false);
+            }, ct);
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            if (!placed)
+                try { store.DeleteFile(temporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
         }
     }
 
     // Rename or move a file or folder. Returns the error to show, or null on success.
     public async Task<string?> MoveAsync(string from, string to, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
+        var store = await StoreAsync(ct);
         if (from.Length == 0 || to.Length == 0) return "Choose what to move and where.";
         if (to == from || to.StartsWith(from + "/", StringComparison.Ordinal)) return "A folder can't be moved into itself.";
 
-        var source = FamilyFilePaths.ToDisk(root, from);
-        var target = FamilyFilePaths.ToDisk(root, to);
-        if (File.Exists(target) || Directory.Exists(target)) return $"There is already something called {FamilyFilePaths.NameOf(to)} there.";
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-
-        if (File.Exists(source))
+        return await Task.Run(async () =>
         {
-            File.Move(source, target);
-            await index.MoveAsync(from, to, ct);
-            return null;
-        }
-        if (Directory.Exists(source))
-        {
-            var moved = new DirectoryInfo(source).EnumerateFiles("*", SearchOption.AllDirectories)
-                .Select(f => FamilyFilePaths.FromDisk(root, f.FullName)).ToList();
-            Directory.Move(source, target);
-            foreach (var relative in moved)
-                await index.MoveAsync(relative, to + relative[from.Length..], ct);
-            return null;
-        }
-        return "That file or folder isn't in the library any more.";
+            if (store.Stat(to) is not null) return $"There is already something called {FamilyFilePaths.NameOf(to)} there.";
+            switch (store.Stat(from))
+            {
+                case { IsFolder: false }:
+                    store.Move(from, to);
+                    await index.MoveAsync(from, to, ct);
+                    return null;
+                case { IsFolder: true }:
+                    var moved = store.Walk(from).Select(f => f.Path).ToList();
+                    store.Move(from, to);
+                    foreach (var relative in moved)
+                        await index.MoveAsync(relative, to + relative[from.Length..], ct);
+                    return null;
+                default:
+                    return "That file or folder isn't in the library any more.";
+            }
+        }, ct);
     }
 
     // To the trash, never gone: a file or a whole folder.
     public async Task<FamilyFilesTrash.Batch?> DeleteAsync(string relative, string? by, CancellationToken ct)
     {
-        var root = await RootAsync(ct);
+        var store = await StoreAsync(ct);
         if (relative.Length == 0) return null;
-        var disk = FamilyFilePaths.ToDisk(root, relative);
+        var found = await Task.Run(() => store.Stat(relative), ct);
         List<string> paths;
-        if (File.Exists(disk)) paths = [relative];
-        else if (Directory.Exists(disk))
-            paths = new DirectoryInfo(disk).EnumerateFiles("*", SearchOption.AllDirectories)
-                .Where(f => !IsHiddenOrPartial(f.Name))
-                .Select(f => FamilyFilePaths.FromDisk(root, f.FullName)).ToList();
+        if (found is { IsFolder: false }) paths = [relative];
+        else if (found is { IsFolder: true })
+            paths = await Task.Run(() => store.Walk(relative).Where(f => !IsHiddenOrPartial(f.Name)).Select(f => f.Path).ToList(), ct);
         else return null;
 
-        var batch = await trash.MoveAsync(root, paths, FamilyFilesTrash.ReasonDeleted, by, ct);
+        var batch = await trash.MoveAsync(store, paths, FamilyFilesTrash.ReasonDeleted, by, ct);
         foreach (var path in paths) await index.ForgetAsync(path, ct);
-        if (Directory.Exists(disk)) TryDeleteEmptyTree(disk);
+        if (found.IsFolder) await Task.Run(() => store.DeleteEmptyFolders(relative), ct);
         return batch;
     }
 
     // A small JPEG for the file lists, made on first request and kept; null for anything that
     // isn't an image ImageSharp can read.
-    public async Task<string?> ThumbnailAsync(string relative, FileInfo file, CancellationToken ct)
+    public async Task<string?> ThumbnailAsync(FamilyStoreEntry file, CancellationToken ct)
     {
         if (!FamilyFilePaths.IsImage(file.Name)) return null;
-        var hash = await index.HashAsync(relative, file, ct);
+        var store = await StoreAsync(ct);
+        var hash = await index.HashAsync(store, file, ct);
         var thumbnail = Path.Combine(locations.Thumbnails, $"{hash}-{ThumbnailEdge}.jpg");
         if (File.Exists(thumbnail)) return thumbnail;
 
@@ -495,7 +512,8 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
         var temporary = thumbnail + $".{Guid.NewGuid():N}.part";
         try
         {
-            using var image = await Image.LoadAsync(SafeImageDecoding.Options, file.FullName, ct);
+            await using var input = await Task.Run(() => store.OpenRead(file.Path), ct);
+            using var image = await Image.LoadAsync(SafeImageDecoding.Options, input, ct);
             image.Mutate(context => context.AutoOrient().Resize(new ResizeOptions
             {
                 Mode = ResizeMode.Max,
@@ -513,17 +531,6 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
         {
             if (File.Exists(temporary)) File.Delete(temporary);
         }
-    }
-
-    internal static void TryDeleteEmptyTree(string directory)
-    {
-        try
-        {
-            foreach (var child in Directory.EnumerateDirectories(directory)) TryDeleteEmptyTree(child);
-            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
     }
 }
 
@@ -543,11 +550,12 @@ public sealed class FamilyFilesTrash(string root)
 
     public string Root => root;
 
-    public Task<Batch> MoveAsync(string library, IReadOnlyList<string> paths, string reason, string? by, CancellationToken ct) =>
+    public Task<Batch> MoveAsync(IFamilyLibraryStore library, IReadOnlyList<string> paths, string reason, string? by, CancellationToken ct) =>
         MoveAsync(library, paths.Select(p => (p, (string?)null)).ToList(), reason, by, ct);
 
-    // `items` are (relative path, the copy that was kept - duplicates only).
-    public async Task<Batch> MoveAsync(string library, IReadOnlyList<(string Path, string? KeptCopy)> items, string reason, string? by, CancellationToken ct)
+    // `items` are (relative path, the copy that was kept - duplicates only). The trash is always
+    // on this server, so a library on another computer has its deletions copied here first.
+    public async Task<Batch> MoveAsync(IFamilyLibraryStore library, IReadOnlyList<(string Path, string? KeptCopy)> items, string reason, string? by, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -560,13 +568,9 @@ public sealed class FamilyFilesTrash(string root)
             var files = new List<BatchFile>();
             foreach (var (relative, kept) in items)
             {
-                var source = FamilyFilePaths.ToDisk(library, relative);
-                if (!File.Exists(source)) continue;
-                var target = FamilyFilePaths.ToDisk(folder, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                var size = new FileInfo(source).Length;
-                File.Move(source, target, overwrite: true);
-                files.Add(new BatchFile(relative, size, kept));
+                if (await Task.Run(() => library.Stat(relative), ct) is not { IsFolder: false } source) continue;
+                await library.MoveOutAsync(relative, FamilyFilePaths.ToDisk(folder, relative), ct);
+                files.Add(new BatchFile(relative, source.Size, kept));
             }
 
             var batch = new Batch(id, now, reason, by, files);
@@ -595,7 +599,7 @@ public sealed class FamilyFilesTrash(string root)
 
     // Puts one file, or a whole batch, back. A file whose place has been taken since goes back
     // as "name (restored).ext". Returns how many came back.
-    public async Task<int> RestoreAsync(string library, string batchId, string? onlyPath, CancellationToken ct)
+    public async Task<int> RestoreAsync(IFamilyLibraryStore library, string batchId, string? onlyPath, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -615,17 +619,15 @@ public sealed class FamilyFilesTrash(string root)
                 var source = FamilyFilePaths.ToDisk(Path.Combine(root, batchId), file.Path);
                 if (!File.Exists(source)) continue;
 
-                var target = FamilyFilePaths.ToDisk(library, file.Path);
-                if (File.Exists(target))
+                var target = file.Path;
+                if (await Task.Run(() => library.Stat(target), ct) is not null)
                 {
                     var stem = Path.GetFileNameWithoutExtension(file.Path);
                     var extension = Path.GetExtension(file.Path);
-                    target = FamilyFilePaths.ToDisk(library,
-                        FamilyFilePaths.NextFreeName(FamilyFilePaths.ParentOf(file.Path), $"{stem} (restored){extension}",
-                            candidate => File.Exists(FamilyFilePaths.ToDisk(library, candidate))));
+                    target = await Task.Run(() => FamilyFilePaths.NextFreeName(FamilyFilePaths.ParentOf(file.Path), $"{stem} (restored){extension}",
+                        candidate => library.Stat(candidate) is not null), ct);
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Move(source, target);
+                await library.MoveInAsync(source, target, ct);
                 restored++;
             }
 

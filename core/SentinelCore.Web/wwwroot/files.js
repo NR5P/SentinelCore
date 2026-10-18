@@ -87,7 +87,9 @@ window.SentinelFiles = (function () {
     if (status && status.enabled) {
       const admin = status.isAdmin;
       el("files-drives-btn").textContent = admin ? "backup drives" : "backups";
-      el("files-summary").textContent = `${status.library.files} file(s), ${formatSize(status.library.bytes)}`;
+      el("files-summary").textContent = `${status.library.files} file(s), ${formatSize(status.library.bytes)}` +
+        (status.libraryOnNetwork ? " · on another computer" : "") +
+        (status.libraryProblem ? ` · ${status.libraryProblem}` : "");
       renderJob();
       if (status.job) startJobPolling(); else stopJobPolling();
     }
@@ -398,9 +400,18 @@ window.SentinelFiles = (function () {
           </div>` : ""}
         </div>`).join("");
 
+    const location = admin ? `
+        <div class="org-subsection">LIBRARY LOCATION</div>
+        <div class="camera-card files-row"><div class="camera-card-info">
+          <div class="camera-card-name">${escapeHtml(status.libraryFolder || "")}</div>
+          <div class="camera-card-meta">${status.libraryOnNetwork ? "A shared folder on another computer, reached over the network." : "A folder on this server."}${status.libraryProblem ? ` <span class="camera-test-status camera-test-status-error">problem</span> ${escapeHtml(status.libraryProblem)}` : ""}</div>
+        </div><div class="camera-card-actions"><button class="btn btn-small" id="files-location-edit" data-tip="Keep the library on this server or in a folder shared from another computer (Windows, Linux with Samba, a NAS).">change</button></div></div>` : "";
+
     openModal(`
       <div class="zone-editor-header"><span>BACKUP DRIVES</span><button class="btn btn-small" id="files-modal-close">close</button></div>
       <div class="files-modal-body">
+        ${location}
+        <div class="org-subsection">DRIVES</div>
         <p class="settings-hint">The library is copied to every drive below each night${nightly.nextRunUtc ? ` (next at ${escapeHtml(formatDate(nightly.nextRunUtc))})` : ""} and whenever you press "back up now". A drive keeps a plain copy of the folders anyone can open, and only ever loses a file that has left the library.</p>
         <div class="settings-root" id="files-drive-rows">${driveRows}</div>
         ${admin ? `<div class="files-actions-row">
@@ -431,6 +442,7 @@ window.SentinelFiles = (function () {
     modalRefresh = openDrives;
     if (!admin) return;
 
+    el("files-location-edit").addEventListener("click", editLocation);
     el("files-add-drive").addEventListener("click", () => editDrive(null));
     for (const button of el("files-drive-rows").querySelectorAll("[data-edit]"))
       button.addEventListener("click", () => editDrive(drives.find((d) => d.id === button.dataset.edit)));
@@ -577,6 +589,96 @@ window.SentinelFiles = (function () {
         await api(`/drives/${drive.id}`, { method: "DELETE" });
         openDrives();
       } catch (error) {
+        errors([error.message]);
+      }
+    });
+  }
+
+  // ---- where the library lives ---------------------------------------------------------------
+
+  function editLocation() {
+    const current = status.libraryFolder || "";
+    const onNetwork = !!status.libraryOnNetwork;
+    openModal(`
+      <div class="zone-editor-header"><span>LIBRARY LOCATION</span><button class="btn btn-small" id="files-modal-close">close</button></div>
+      <form class="files-form" id="files-location-form">
+        <div class="field-grid">
+          <div class="field-row field-row-wide"><label class="field-label">Where the files live</label>
+            <select class="field-input" name="kind">
+              <option value="local" ${onNetwork ? "" : "selected"}>A folder on this server</option>
+              <option value="network" ${onNetwork ? "selected" : ""}>A shared folder on another computer</option>
+            </select></div>
+        </div>
+        <div class="field-grid" data-kind="local">
+          <div class="field-row field-row-wide"><label class="field-label">Folder</label><input class="field-input" name="localPath" value="${onNetwork ? "" : escapeHtml(current)}" placeholder="/mnt/bigdisk/Family Files  (blank = the data folder)" />
+            <div class="field-note">A full path on the server. Blank keeps the library under the server's data folder.</div></div>
+        </div>
+        <div class="field-grid" data-kind="network">
+          <div class="field-row field-row-wide"><label class="field-label">Shared folder</label><input class="field-input" name="networkPath" value="${onNetwork ? escapeHtml(current) : ""}" placeholder="smb://192.168.1.20/Family/Files  or  \\\\DESKTOP-PC\\Family" />
+            <div class="field-note">The computer's name or address, then the shared folder's name, then any folder inside it (made if it isn't there).
+              On Windows, share the folder (Properties → Sharing) and give the account "Change" permission. On Linux, share it with Samba (<code>smbpasswd -a</code> for the user) with <code>writable = yes</code>.</div></div>
+          <div class="field-row"><label class="field-label">Username</label><input class="field-input" name="username" autocomplete="off" placeholder="the account on that computer" /></div>
+          <div class="field-row"><label class="field-label">Password</label><input class="field-input" name="password" type="password" autocomplete="new-password" placeholder="blank = the one already saved" /></div>
+          <div class="field-row field-row-wide"><div class="field-note">The sign-in is saved for that computer and shared with Movies libraries on it. Leave both blank to use a saved sign-in, or to try as a guest.</div></div>
+        </div>
+        <p class="settings-hint">Changing this doesn't move anything: files in the old place stay there. To fill the new place, copy them across yourself, or use "bring files back" on a backup drive.</p>
+        <ul class="field-errors" id="files-location-errors"></ul>
+        <div class="zone-editor-footer">
+          <button class="btn" type="submit">use this location</button>
+          <button class="btn" type="button" id="files-location-test">test</button>
+          <span class="event-count" id="files-location-note"></span>
+        </div>
+      </form>`);
+
+    const form = el("files-location-form");
+    const showKind = () => {
+      for (const grid of form.querySelectorAll("[data-kind]")) grid.classList.toggle("hidden", grid.dataset.kind !== form.elements.kind.value);
+    };
+    form.elements.kind.addEventListener("change", showKind);
+    showKind();
+    el("files-modal-close").addEventListener("click", openDrives);
+
+    const read = () => {
+      const network = form.elements.kind.value === "network";
+      let location = (network ? form.elements.networkPath.value : form.elements.localPath.value).trim();
+      // A bare "computer/Share" typed into the network box.
+      if (network && location && !/^(smb:)?[\\/]{2}/i.test(location)) location = `smb://${location}`;
+      return {
+        location,
+        username: network ? form.elements.username.value : "",
+        password: network ? form.elements.password.value : ""
+      };
+    };
+    const errors = (messages) => {
+      el("files-location-errors").innerHTML = messages.map((m) => `<li>${escapeHtml(m)}</li>`).join("");
+    };
+    const note = el("files-location-note");
+
+    el("files-location-test").addEventListener("click", async () => {
+      errors([]);
+      note.textContent = "testing…";
+      try {
+        note.textContent = (await api("/library/test", json("POST", read()))).detail;
+      } catch (error) {
+        note.textContent = "";
+        errors([error.message]);
+      }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errors([]);
+      const body = read();
+      if (body.location === current) { openDrives(); return; }
+      if (!confirm(`Move the library to ${body.location || "the server's data folder"}? Files already in ${current} stay there and stop showing in the library.`)) return;
+      note.textContent = "checking…";
+      try {
+        const result = await api("/library", json("PUT", body));
+        showToast(result.detail, true);
+        currentPath = "";
+        loadListing();
+        openDrives();
+      } catch (error) {
+        note.textContent = "";
         errors([error.message]);
       }
     });

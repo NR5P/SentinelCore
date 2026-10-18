@@ -285,6 +285,8 @@ public sealed class MediaNetworkFileSystem : IMediaFileSystem, IDisposable
             try
             {
                 status = connection.Store.QueryDirectory(out var found, handle, "*", FileInformationClass.FileDirectoryInformation);
+                // An empty folder: most servers list "." and "..", some answer "no such file".
+                if (status == NTStatus.STATUS_NO_SUCH_FILE) return [];
                 if (status != NTStatus.STATUS_SUCCESS && status != NTStatus.STATUS_NO_MORE_FILES) ThrowIfFailed(status, parsed, isDirectory: true);
                 var entries = new List<MediaFsEntry>();
                 foreach (var info in (found ?? []).OfType<FileDirectoryInformation>())
@@ -374,6 +376,121 @@ public sealed class MediaNetworkFileSystem : IMediaFileSystem, IDisposable
             }
         }
     }
+
+    // MARK: - Writing (Family Files keeps its library on a share; Movies only ever reads)
+
+    // A new, empty file to write into; its folder must already exist. Throws IOException when
+    // something is already at that name - nothing on a share is ever overwritten from here.
+    public Stream CreateNew(string path)
+    {
+        var parsed = Parse(path);
+        if (parsed.Share.Length == 0 || parsed.Rest.Length == 0) throw new IOException("Not a file path.");
+        for (var attempt = 0; ; attempt++)
+        {
+            var connection = Acquire(parsed);
+            try
+            {
+                var status = connection.Store.CreateFile(out var handle, out _, parsed.SmbPath,
+                    AccessMask.GENERIC_WRITE | AccessMask.GENERIC_READ | AccessMask.SYNCHRONIZE, FileAttributes.Normal,
+                    ShareAccess.Read, CreateDisposition.FILE_CREATE,
+                    CreateOptions.FILE_NON_DIRECTORY_FILE | CreateOptions.FILE_SYNCHRONOUS_IO_ALERT, null);
+                if (status == NTStatus.STATUS_INVALID_SMB && attempt == 0) { connection.Dispose(); continue; }
+                if (status == NTStatus.STATUS_OBJECT_NAME_COLLISION)
+                    throw new IOException($"There is already something called {Leaf(parsed)} there.");
+                if (status == NTStatus.STATUS_ACCESS_DENIED)
+                    throw new UnauthorizedAccessException($"{parsed.Host} does not allow {Who(parsed)} to write in {parsed.Parent()}.");
+                if (status == NTStatus.STATUS_DISK_FULL)
+                    throw new IOException($"The disk on {parsed.Host} is full.");
+                ThrowIfFailed(status, parsed, isDirectory: false);
+                return new SmbWriteStream(this, connection, handle, parsed);
+            }
+            catch
+            {
+                connection.Dispose();
+                throw;
+            }
+        }
+    }
+
+    // Renames or moves a file or folder within one share. Never replaces what is at `to`.
+    public void Rename(string from, string to)
+    {
+        var source = Parse(from);
+        var target = Parse(to);
+        if (!string.Equals(source.HostKey, target.HostKey, StringComparison.OrdinalIgnoreCase) || !string.Equals(source.Share, target.Share, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Files can only be moved within one shared folder.");
+        if (source.Rest.Length == 0 || target.Rest.Length == 0) throw new IOException("A shared folder itself can't be renamed from here.");
+        WithConnection(source, connection =>
+        {
+            var status = connection.Store.CreateFile(out var handle, out _, source.SmbPath, AccessMask.DELETE | AccessMask.GENERIC_READ | AccessMask.SYNCHRONIZE,
+                0, ShareAccess.Read | ShareAccess.Write | ShareAccess.Delete, CreateDisposition.FILE_OPEN, CreateOptions.FILE_SYNCHRONOUS_IO_ALERT, null);
+            if (status == NTStatus.STATUS_ACCESS_DENIED)
+                throw new UnauthorizedAccessException($"{source.Host} does not allow {Who(source)} to rename {Leaf(source)}.");
+            ThrowIfFailed(status, source, isDirectory: false);
+            try
+            {
+                status = connection.Store.SetFileInformation(handle, new FileRenameInformationType2 { ReplaceIfExists = false, FileName = target.SmbPath });
+                if (status == NTStatus.STATUS_OBJECT_NAME_COLLISION)
+                    throw new IOException($"There is already something called {Leaf(target)} there.");
+                if (status == NTStatus.STATUS_ACCESS_DENIED)
+                    throw new UnauthorizedAccessException($"{source.Host} does not allow {Who(source)} to rename {Leaf(source)}.");
+                ThrowIfFailed(status, target, isDirectory: false);
+            }
+            finally { connection.Store.CloseFile(handle); }
+            return true;
+        });
+    }
+
+    // Deletes one file, or one empty folder. A folder with anything in it is refused by the
+    // other computer, which is what the callers rely on.
+    public void Delete(string path)
+    {
+        var parsed = Parse(path);
+        if (parsed.Rest.Length == 0) throw new IOException("A shared folder itself can't be deleted from here.");
+        WithConnection(parsed, connection =>
+        {
+            var status = connection.Store.CreateFile(out var handle, out _, parsed.SmbPath, AccessMask.DELETE | AccessMask.SYNCHRONIZE,
+                0, ShareAccess.Read | ShareAccess.Write | ShareAccess.Delete, CreateDisposition.FILE_OPEN, CreateOptions.FILE_SYNCHRONOUS_IO_ALERT, null);
+            if (status is NTStatus.STATUS_OBJECT_NAME_NOT_FOUND or NTStatus.STATUS_OBJECT_PATH_NOT_FOUND) return true;
+            if (status == NTStatus.STATUS_ACCESS_DENIED)
+                throw new UnauthorizedAccessException($"{parsed.Host} does not allow {Who(parsed)} to delete {Leaf(parsed)}.");
+            ThrowIfFailed(status, parsed, isDirectory: false);
+            try
+            {
+                status = connection.Store.SetFileInformation(handle, new FileDispositionInformation { DeletePending = true });
+                if (status == NTStatus.STATUS_DIRECTORY_NOT_EMPTY) throw new IOException($"{Leaf(parsed)} is not empty.");
+                if (status == NTStatus.STATUS_ACCESS_DENIED)
+                    throw new UnauthorizedAccessException($"{parsed.Host} does not allow {Who(parsed)} to delete {Leaf(parsed)}.");
+                ThrowIfFailed(status, parsed, isDirectory: false);
+            }
+            finally { connection.Store.CloseFile(handle); }
+            return true;
+        });
+    }
+
+    // Best effort, like File.SetLastWriteTimeUtc on a local disk: a share that won't take it
+    // keeps the time the file was written.
+    public void SetLastWriteTime(string path, DateTime utc)
+    {
+        var parsed = Parse(path);
+        if (parsed.Rest.Length == 0) return;
+        WithConnection(parsed, connection =>
+        {
+            var status = connection.Store.CreateFile(out var handle, out _, parsed.SmbPath, AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
+                0, ShareAccess.Read | ShareAccess.Write | ShareAccess.Delete, CreateDisposition.FILE_OPEN, CreateOptions.FILE_SYNCHRONOUS_IO_ALERT, null);
+            if (status != NTStatus.STATUS_SUCCESS) return false;
+            try
+            {
+                connection.Store.SetFileInformation(handle, new FileBasicInformation { LastWriteTime = DateTime.SpecifyKind(utc, DateTimeKind.Utc) });
+            }
+            finally { connection.Store.CloseFile(handle); }
+            return true;
+        });
+    }
+
+    private string Who(MediaNetworkPath path) => _computers.ForHost(path.HostKey) is { Username.Length: > 0 } saved ? saved.Username : "a guest";
+
+    private static string Leaf(MediaNetworkPath path) => path.Rest.Length > 0 ? path.Rest[(path.Rest.LastIndexOf('/') + 1)..] : path.Share;
 
     public string Combine(string directory, string name) => Parse(directory).Child(name).ToString();
 
@@ -563,6 +680,7 @@ public sealed class MediaNetworkFileSystem : IMediaFileSystem, IDisposable
         public ISMBFileStore Store { get; } = store;
         public DateTime LastUsedUtc { get; set; } = DateTime.UtcNow;
         public uint MaxReadSize => Math.Max(64 * 1024, Math.Min(Client.MaxReadSize, 1024 * 1024));
+        public int MaxWriteSize => (int)Math.Max(64 * 1024, Math.Min(Client.MaxWriteSize, 1024 * 1024));
 
         public void Dispose()
         {
@@ -651,6 +769,106 @@ public sealed class MediaNetworkFileSystem : IMediaFileSystem, IDisposable
                 else connection.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    // A write-only stream into a new file on a share, sent in chunks of the server's largest
+    // write. Length is how much has been written, which the callers check against what they meant
+    // to send.
+    private sealed class SmbWriteStream(MediaNetworkFileSystem owner, SmbConnection connection, object handle, MediaNetworkPath path) : Stream
+    {
+        private readonly MemoryStream _pending = new();
+        private long _written;
+        private bool _disposed;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => !_disposed;
+        public override long Length => _written + _pending.Length;
+
+        public override long Position
+        {
+            get => Length;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> source)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _pending.Write(source);
+            while (_pending.Length >= connection.MaxWriteSize) Send(connection.MaxWriteSize);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        // SMBLibrary is synchronous; only a write that fills a chunk waits on the network, and
+        // that wait happens on a pool thread.
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_pending.Length + source.Length < connection.MaxWriteSize)
+            {
+                _pending.Write(source.Span);
+                return ValueTask.CompletedTask;
+            }
+            var copy = source.ToArray();
+            return new ValueTask(Task.Run(() => Write(copy), cancellationToken));
+        }
+
+        public override void Flush()
+        {
+            if (_pending.Length > 0) Send((int)_pending.Length);
+        }
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            _pending.Length == 0 ? Task.CompletedTask : Task.Run(Flush, cancellationToken);
+
+        private void Send(int count)
+        {
+            var all = _pending.GetBuffer();
+            var chunk = all.AsSpan(0, count).ToArray();
+            var status = connection.Store.WriteFile(out var written, handle, _written, chunk);
+            if (status == NTStatus.STATUS_DISK_FULL) throw new IOException($"The disk on {path.Host} is full.");
+            if (status != NTStatus.STATUS_SUCCESS || written != count) throw new IOException($"Writing to {path.Host} failed ({status}).");
+            _written += count;
+            var rest = (int)_pending.Length - count;
+            Buffer.BlockCopy(all, count, all, 0, rest);
+            _pending.SetLength(rest);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                var ok = true;
+                try { Flush(); }
+                catch { ok = false; }
+                var closed = connection.Store.CloseFile(handle);
+                if (ok && closed == NTStatus.STATUS_SUCCESS) owner.Release(connection);
+                else connection.Dispose();
+                // A failure here is not thrown (Dispose runs in finally blocks); callers flush
+                // first and check the size of what landed.
+                _pending.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (!_disposed && _pending.Length > 0)
+            {
+                try { await FlushAsync(); }
+                catch (IOException) { /* Dispose drops the connection; the size check catches it */ }
+            }
+            Dispose();
         }
     }
 }

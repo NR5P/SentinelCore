@@ -426,7 +426,7 @@ either folder later does not move what is already there.
 | What | Default location | Moved by |
 |---|---|---|
 | Downloaded podcast episodes (capped at 50 GB by default) | `<data>/podcasts/` | Settings → PODCASTS → Download Folder, Storage Limit |
-| The Family Files library | `<data>/family-files/library/` | Settings → FAMILY FILES → Library Folder |
+| The Family Files library | `<data>/family-files/library/` | Settings → FAMILY FILES → Library Folder (a local path, or `smb://computer/Share/folder` on another computer) |
 | Movie, TV and music libraries | Wherever you point each library | The Movies tab / Music → Libraries |
 | Movie HLS sessions, extracted subtitles, TMDB artwork | `<data>/media-hls/`, `media-subs/`, `media-art/` | - (caches; HLS sessions are wiped at startup) |
 | Music covers, tracks converted for a device | `<data>/music-art/`, `<data>/audio-cache/` | - (caches) |

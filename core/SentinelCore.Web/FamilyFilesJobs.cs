@@ -185,9 +185,9 @@ public sealed class FamilyFilesJobs(
 
     public async Task<IReadOnlyList<FamilyFileEntry>> IndexAsync(CancellationToken ct)
     {
-        var root = await library.RootAsync(ct);
+        var store = await library.StoreAsync(ct);
         Report("checking the library", 0, 0);
-        var files = await index.RescanAsync(root, (done, total) => Report("checking the library", done, total), ct);
+        var files = await index.RescanAsync(store, (done, total) => Report("checking the library", done, total), ct);
         await stateFile.UpdateAsync(s => s with
         {
             IndexedUtc = DateTimeOffset.UtcNow,
@@ -224,14 +224,14 @@ public sealed class FamilyFilesJobs(
         if (remove && copies > 0)
         {
             Report($"moving {copies} duplicate(s) to the trash", 0, copies);
-            var root = await library.RootAsync(ct);
+            var store = await library.StoreAsync(ct);
             var items = groups.SelectMany(g => g.Copies.Select(c => (c, (string?)g.Kept))).ToList();
-            var batch = await trash.MoveAsync(root, items, FamilyFilesTrash.ReasonDuplicate, by, ct);
+            var batch = await trash.MoveAsync(store, items, FamilyFilesTrash.ReasonDuplicate, by, ct);
             batchId = batch.Id;
             foreach (var (path, _) in items) await index.ForgetAsync(path, ct);
             await index.SaveAsync(ct);
-            foreach (var group in groups)
-                FamilyFilesLibrary.TryDeleteEmptyTree(Path.GetDirectoryName(FamilyFilePaths.ToDisk(root, group.Copies[0]))!);
+            foreach (var folder in groups.SelectMany(g => g.Copies).Select(FamilyFilePaths.ParentOf).Where(f => f.Length > 0).Distinct())
+                await Task.Run(() => store.DeleteEmptyFolders(folder), ct);
         }
 
         var report = new FamilyDuplicateReport
@@ -259,7 +259,7 @@ public sealed class FamilyFilesJobs(
     public async Task<FamilyDriveState> SyncDriveAsync(FamilyDrive drive, IReadOnlyList<FamilyFileEntry>? files, CancellationToken ct)
     {
         files ??= await IndexAsync(ct);
-        var root = await library.RootAsync(ct);
+        var store = await library.StoreAsync(ct);
         var started = DateTimeOffset.UtcNow;
         if (_current is { } current) _current = current with { DriveId = drive.Id, DriveName = drive.Name };
         Report($"backing up to {drive.Name}", 0, files.Count);
@@ -267,7 +267,7 @@ public sealed class FamilyFilesJobs(
         FamilyDriveState outcome;
         try
         {
-            var result = await FamilyDriveSync.MirrorAsync(drive, root, files,
+            var result = await FamilyDriveSync.MirrorAsync(drive, store, files,
                 (done, total, path) => Report($"backing up to {drive.Name}: {path}", done, total), logger, ct);
             outcome = new FamilyDriveState
             {
@@ -311,13 +311,12 @@ public sealed class FamilyFilesJobs(
 
     public async Task<FamilyDriveRestoreResult> RestoreFromDriveAsync(FamilyDrive drive, CancellationToken ct)
     {
-        var root = await library.RootAsync(ct);
-        Directory.CreateDirectory(root);
+        var store = await library.StoreAsync(ct);
         if (_current is { } current) _current = current with { DriveId = drive.Id, DriveName = drive.Name };
         Report($"bringing files back from {drive.Name}", 0, 0);
         try
         {
-            var result = await FamilyDriveSync.RestoreAsync(drive, root, locations.Work,
+            var result = await FamilyDriveSync.RestoreAsync(drive, store, locations.Work,
                 (done, total, path) => Report($"bringing back {path}", done, total), logger, ct);
             await IndexAsync(ct);
             return result;

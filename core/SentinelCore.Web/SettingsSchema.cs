@@ -1370,7 +1370,7 @@ public static class SettingsSchema
             Fields =
             [
                 Check("enabled", "Enabled", "Show the FILES tab and run the nightly backup and duplicate check. Turning it off hides the tab and stops the nightly pass but deletes nothing."),
-                Text("libraryFolder", "Library Folder", "Where the files themselves live on this machine. Blank keeps them under the data folder. Set a full path on a bigger disk before adding much - changing it later does not move what is already there."),
+                Text("libraryFolder", "Library Folder", "Where the files themselves live. Blank keeps them under the data folder; a full path puts them on a bigger disk; smb://computer/SharedFolder/folder keeps them in a folder shared from another computer on the network - a Windows PC, a Linux box running Samba, a NAS. For a shared folder, use 'library location' on the FILES tab: it signs in to that computer and checks it can write there. Changing this later does not move what is already there."),
                 Number("maxUploadMegabytes", "Largest File (MB)", "The biggest single file anyone can add.", 1, 1048576),
                 Number("hour", "Hour (0-23)", "Hour the nightly backup and duplicate check run, in 24-hour time, in the Schedules time zone (the server's own if that's blank). If the server is off then, it runs as soon as it's back.", 0, 23),
                 Number("minute", "Minute", "Minute past the hour to run.", 0, 59),

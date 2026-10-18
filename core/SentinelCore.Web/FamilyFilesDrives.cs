@@ -241,7 +241,8 @@ public interface IFamilyDriveTarget : IAsyncDisposable
     Task<FamilyDriveManifest> ReadManifestAsync(CancellationToken ct);
     Task WriteManifestAsync(FamilyDriveManifest manifest, CancellationToken ct);
     Task<long?> SizeOfAsync(string relative, CancellationToken ct);
-    Task UploadAsync(string localPath, string relative, long bytes, CancellationToken ct);
+    // `input` is the library's copy, read from wherever the library lives.
+    Task UploadAsync(Stream input, DateTime modifiedUtc, string relative, long bytes, CancellationToken ct);
     Task DownloadAsync(string relative, string localPath, CancellationToken ct);
     Task DeleteAsync(string relative, CancellationToken ct);
     IAsyncEnumerable<(string Relative, long Size)> WalkAsync(CancellationToken ct);
@@ -304,15 +305,14 @@ public sealed class FolderFamilyDriveTarget(string root) : IFamilyDriveTarget
         return Task.FromResult(file.Exists ? file.Length : (long?)null);
     }
 
-    public async Task UploadAsync(string localPath, string relative, long bytes, CancellationToken ct)
+    public async Task UploadAsync(Stream input, DateTime modifiedUtc, string relative, long bytes, CancellationToken ct)
     {
         var target = FamilyFilePaths.ToDisk(root, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         var partial = target + ".partial";
-        await using (var input = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true))
         await using (var output = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
         {
-            await input.CopyToAsync(output, ct);
+            await input.CopyToAsync(output, 1 << 20, ct);
             await output.FlushAsync(ct);
         }
         if (new FileInfo(partial).Length != bytes)
@@ -320,7 +320,7 @@ public sealed class FolderFamilyDriveTarget(string root) : IFamilyDriveTarget
             File.Delete(partial);
             throw new FamilyDriveException("The copy came out a different size from the original - the drive may be full.");
         }
-        try { File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(localPath)); }
+        try { File.SetLastWriteTimeUtc(partial, modifiedUtc); }
         catch (IOException) { }
         File.Move(partial, target, overwrite: true);
     }
@@ -455,15 +455,14 @@ public sealed class SftpFamilyDriveTarget(FamilyDrive drive) : IFamilyDriveTarge
         return (await Client.GetAttributesAsync(path, ct)).Size;
     }
 
-    public async Task UploadAsync(string localPath, string relative, long bytes, CancellationToken ct)
+    public async Task UploadAsync(Stream input, DateTime modifiedUtc, string relative, long bytes, CancellationToken ct)
     {
         var path = Remote(relative);
         var parent = FamilyFilePaths.ParentOf(relative);
         if (parent.Length > 0) await EnsureFolderAsync(Client, Remote(parent), ct);
 
         var partial = path + ".partial";
-        await using (var input = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true))
-            await Client.UploadFileAsync(input, partial, ct);
+        await Client.UploadFileAsync(input, partial, ct);
 
         var uploaded = await Client.GetAttributesAsync(partial, ct);
         if (uploaded.Size != bytes)
@@ -588,7 +587,7 @@ public static class FamilyDriveSync
     // same hash and size are left alone; everything else is copied; files the manifest says we
     // wrote that the library no longer has are removed.
     public static async Task<FamilyDriveSyncResult> MirrorAsync(
-        FamilyDrive drive, string libraryRoot, IReadOnlyList<FamilyFileEntry> library, Progress? progress, ILogger logger, CancellationToken ct)
+        FamilyDrive drive, IFamilyLibraryStore source, IReadOnlyList<FamilyFileEntry> library, Progress? progress, ILogger logger, CancellationToken ct)
     {
         await using var target = FamilyDriveTargets.Open(drive);
         await target.OpenAsync(ct);
@@ -620,7 +619,8 @@ public static class FamilyDriveSync
 
             try
             {
-                await target.UploadAsync(FamilyFilePaths.ToDisk(libraryRoot, file.Path), file.Path, file.Size, ct);
+                await using (var input = await Task.Run(() => source.OpenRead(file.Path), ct))
+                    await target.UploadAsync(input, file.ModifiedUtc.UtcDateTime, file.Path, file.Size, ct);
                 manifest.Files[file.Path] = new FamilyDriveManifest.Entry(file.Size, file.Sha256!);
                 manifestDirty = true;
                 copied++;
@@ -679,11 +679,12 @@ public static class FamilyDriveSync
     // library is touched, and a file present in both at different sizes comes back as "name (from
     // drive).ext" so the two can be compared.
     public static async Task<FamilyDriveRestoreResult> RestoreAsync(
-        FamilyDrive drive, string libraryRoot, string workDirectory, Progress? progress, ILogger logger, CancellationToken ct)
+        FamilyDrive drive, IFamilyLibraryStore library, string workDirectory, Progress? progress, ILogger logger, CancellationToken ct)
     {
         await using var target = FamilyDriveTargets.Open(drive);
         await target.OpenAsync(ct);
         Directory.CreateDirectory(workDirectory);
+        await Task.Run(() => library.CreateFolder(""), ct);
 
         var files = new List<(string Relative, long Size)>();
         await foreach (var entry in target.WalkAsync(ct)) files.Add(entry);
@@ -698,15 +699,15 @@ public static class FamilyDriveSync
             ct.ThrowIfCancellationRequested();
             progress?.Invoke(done++, files.Count, relative);
 
-            var destination = FamilyFilePaths.ToDisk(libraryRoot, relative);
-            if (File.Exists(destination))
+            var destination = relative;
+            if (await Task.Run(() => library.Stat(destination), ct) is { } existing)
             {
-                if (new FileInfo(destination).Length == size) { skipped++; continue; }
+                if (!existing.IsFolder && existing.Size == size) { skipped++; continue; }
                 var stem = Path.GetFileNameWithoutExtension(relative);
                 var extension = Path.GetExtension(relative);
-                destination = FamilyFilePaths.ToDisk(libraryRoot, FamilyFilePaths.NextFreeName(
+                destination = await Task.Run(() => FamilyFilePaths.NextFreeName(
                     FamilyFilePaths.ParentOf(relative), $"{stem} (from drive){extension}",
-                    candidate => File.Exists(FamilyFilePaths.ToDisk(libraryRoot, candidate))));
+                    candidate => library.Stat(candidate) is not null), ct);
             }
 
             var temporary = Path.Combine(workDirectory, $"restore-{Guid.NewGuid():N}.part");
@@ -714,8 +715,7 @@ public static class FamilyDriveSync
             {
                 await target.DownloadAsync(relative, temporary, ct);
                 if (new FileInfo(temporary).Length != size) throw new FamilyDriveException("the copy came back a different size");
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Move(temporary, destination);
+                await library.MoveInAsync(temporary, destination, ct);
                 bytes += size;
                 copied++;
             }

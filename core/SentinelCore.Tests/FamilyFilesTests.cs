@@ -279,6 +279,7 @@ public sealed class FamilyFilesTests : IDisposable
         var work = TempDirectory();
         var index = new FamilyFilesIndex(Path.Combine(TempDirectory(), "index.json"));
         var drive = new FamilyDrive { Id = "d1", Name = "USB", Kind = FamilyDrive.KindFolder, FolderPath = driveFolder };
+        var store = new LocalFamilyLibraryStore(library);
 
         Directory.CreateDirectory(Path.Combine(library, "Photos"));
         await File.WriteAllTextAsync(Path.Combine(library, "Photos", "a.jpg"), "aaa", Ct);
@@ -286,8 +287,8 @@ public sealed class FamilyFilesTests : IDisposable
         // Something of the owner's already on the drive - never ours to touch.
         await File.WriteAllTextAsync(Path.Combine(driveFolder, "keep-me.txt"), "not yours", Ct);
 
-        var files = await index.RescanAsync(library, null, Ct);
-        var first = await FamilyDriveSync.MirrorAsync(drive, library, files, null, NullLogger.Instance, Ct);
+        var files = await index.RescanAsync(store, null, Ct);
+        var first = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
         Assert.True(first.Ok, first.Message);
         Assert.Equal(2, first.Copied);
         Assert.Equal(0, first.Removed);
@@ -295,20 +296,20 @@ public sealed class FamilyFilesTests : IDisposable
         Assert.True(File.Exists(Path.Combine(driveFolder, FamilyDriveManifest.FileName)));
 
         // A second pass with nothing changed copies nothing.
-        var second = await FamilyDriveSync.MirrorAsync(drive, library, files, null, NullLogger.Instance, Ct);
+        var second = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
         Assert.Equal(0, second.Copied);
 
         // A file that left the library leaves the drive; the owner's own file stays.
         File.Delete(Path.Combine(library, "b.txt"));
-        files = await index.RescanAsync(library, null, Ct);
-        var third = await FamilyDriveSync.MirrorAsync(drive, library, files, null, NullLogger.Instance, Ct);
+        files = await index.RescanAsync(store, null, Ct);
+        var third = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
         Assert.Equal(1, third.Removed);
         Assert.False(File.Exists(Path.Combine(driveFolder, "b.txt")));
         Assert.Equal("not yours", await File.ReadAllTextAsync(Path.Combine(driveFolder, "keep-me.txt"), Ct));
 
         // A drive that was wiped behind the manifest's back is noticed and refilled.
         File.Delete(Path.Combine(driveFolder, "Photos", "a.jpg"));
-        var fourth = await FamilyDriveSync.MirrorAsync(drive, library, files, null, NullLogger.Instance, Ct);
+        var fourth = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
         Assert.Equal(1, fourth.Copied);
 
         // The library dies; the drive brings it back - the owner's file included, since it was
@@ -316,7 +317,7 @@ public sealed class FamilyFilesTests : IDisposable
         Directory.Delete(library, recursive: true);
         Directory.CreateDirectory(library);
         await File.WriteAllTextAsync(Path.Combine(library, "new.txt"), "made after the loss", Ct);
-        var restore = await FamilyDriveSync.RestoreAsync(drive, library, work, null, NullLogger.Instance, Ct);
+        var restore = await FamilyDriveSync.RestoreAsync(drive, store, work, null, NullLogger.Instance, Ct);
         Assert.True(restore.Ok, restore.Message);
         Assert.Equal(2, restore.Copied);
         Assert.Equal("aaa", await File.ReadAllTextAsync(Path.Combine(library, "Photos", "a.jpg"), Ct));
@@ -451,7 +452,7 @@ public sealed class FamilyFilesTests : IDisposable
 
         // A trash batch old enough to be emptied, planted directly.
         var trash = factory.Services.GetRequiredService<FamilyFilesTrash>();
-        var oldBatch = await trash.MoveAsync(Library(dataDirectory), ["Docs/z.txt"], FamilyFilesTrash.ReasonDeleted, "test", Ct);
+        var oldBatch = await trash.MoveAsync(new LocalFamilyLibraryStore(Library(dataDirectory)), ["Docs/z.txt"], FamilyFilesTrash.ReasonDeleted, "test", Ct);
         var sidecar = Path.Combine(trash.Root, oldBatch.Id + ".json");
         var web = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var planted = JsonSerializer.Deserialize<FamilyFilesTrash.Batch>(await File.ReadAllTextAsync(sidecar, Ct), web)!;

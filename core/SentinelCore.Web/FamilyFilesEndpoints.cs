@@ -15,6 +15,16 @@ public sealed class FamilyMoveRequest
     public string To { get; set; } = "";
 }
 
+// Where the library should live. For a shared folder on another computer, a username and
+// password for it; blank keeps the sign-in already saved for that computer (or tries as a guest).
+public sealed class FamilyLibraryLocationRequest
+{
+    public string Location { get; set; } = "";
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public string? Domain { get; set; }
+}
+
 public sealed class FamilyTrashRestoreRequest
 {
     public string BatchId { get; set; } = "";
@@ -42,14 +52,32 @@ public static class FamilyFilesEndpoints
             var state = await stateFile.LoadAsync(ct);
             var all = await drives.GetAllAsync(ct);
             var trashed = await trash.ListAsync(ct);
-            var (count, bytes) = state.IndexedUtc is null ? await library.TotalsAsync(ct) : (state.LibraryFiles, state.LibraryBytes);
+            var store = await library.StoreAsync(ct);
+            // A library on another computer that is switched off still lets the tab open, saying
+            // why nothing lists.
+            string? problem = null;
+            int count;
+            long bytes;
+            try
+            {
+                (count, bytes) = state.IndexedUtc is null ? await library.TotalsAsync(ct) : (state.LibraryFiles, state.LibraryBytes);
+                if (store.IsNetwork && state.IndexedUtc is not null && await Task.Run(() => store.Stat(""), ct) is null)
+                    problem = $"{store.Root} isn't there any more - it is made again when the first file is added.";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                (count, bytes) = (state.LibraryFiles, state.LibraryBytes);
+                problem = exception.Message;
+            }
 
             return Results.Ok(new
             {
                 enabled = true,
                 isAdmin = admin,
                 username = context.User.Identity?.Name,
-                libraryFolder = admin ? await library.RootAsync(ct) : null,
+                libraryFolder = admin ? store.Root : null,
+                libraryOnNetwork = store.IsNetwork,
+                libraryProblem = problem,
                 maxUploadBytes = (long)options.MaxUploadMegabytes * 1024 * 1024,
                 library = new { files = count, bytes, indexedUtc = state.IndexedUtc },
                 drives = all.Select(d => d.Public(state.Drives.GetValueOrDefault(d.Id), admin)).ToList(),
@@ -83,9 +111,21 @@ public static class FamilyFilesEndpoints
         {
             var locations = invocation.HttpContext.RequestServices.GetRequiredService<FamilyFilesLocations>();
             var options = await locations.OptionsAsync(invocation.HttpContext.RequestAborted);
-            return options.Enabled
-                ? await next(invocation)
-                : Results.NotFound(new { error = "Family Files is turned off in Settings." });
+            if (!options.Enabled) return Results.NotFound(new { error = "Family Files is turned off in Settings." });
+            try
+            {
+                return await next(invocation);
+            }
+            // A library on another computer that is off, or that turned down the sign-in.
+            catch (MediaNetworkException exception)
+            {
+                return Results.Json(new { error = $"The library is on another computer that can't be reached: {exception.Message}", needsLogin = exception.NeedsLogin },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                return Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status403Forbidden);
+            }
         });
 
         // ---- the library ------------------------------------------------------------------
@@ -144,8 +184,13 @@ public static class FamilyFilesEndpoints
             if (file is null) return Results.NotFound(new { error = "That file isn't in the library." });
             context.Response.Headers.CacheControl = "private, no-cache";
             var contentType = FamilyFilePaths.ContentTypeFor(file.Name);
-            return Results.File(file.FullName, contentType,
-                UploadedContent.DownloadNameFor(context, contentType, file.Name, download == true), file.LastWriteTimeUtc, enableRangeProcessing: true);
+            var downloadName = UploadedContent.DownloadNameFor(context, contentType, file.Name, download == true);
+            var modified = new DateTimeOffset(DateTime.SpecifyKind(file.ModifiedUtc, DateTimeKind.Utc));
+            var store = await library.StoreAsync(ct);
+            if (store.LocalPath(relative) is { } local)
+                return Results.File(local, contentType, downloadName, modified, enableRangeProcessing: true);
+            // Seekable, so a video on the other computer still scrubs.
+            return Results.Stream(await Task.Run(() => store.OpenRead(relative), ct), contentType, downloadName, modified, enableRangeProcessing: true);
         });
 
         enabled.MapGet("/thumbnail/{**path}", async (string path, HttpContext context, FamilyFilesLibrary library, CancellationToken ct) =>
@@ -153,7 +198,7 @@ public static class FamilyFilesEndpoints
             if (FamilyFilePaths.Normalize(path) is not { Length: > 0 } relative) return BadPath();
             var file = await library.FindAsync(relative, ct);
             if (file is null) return Results.NotFound();
-            var thumbnail = await library.ThumbnailAsync(relative, file, ct);
+            var thumbnail = await library.ThumbnailAsync(file, ct);
             if (thumbnail is null) return Results.NotFound();
             context.Response.Headers.CacheControl = "private, max-age=86400";
             return Results.File(thumbnail, "image/jpeg");
@@ -192,13 +237,42 @@ public static class FamilyFilesEndpoints
             if (string.IsNullOrWhiteSpace(request.BatchId) || request.BatchId.Contains('/') || request.BatchId.Contains('\\') || request.BatchId.Contains(".."))
                 return Results.BadRequest(new { error = "Choose what to put back." });
             var only = request.Path is null ? null : FamilyFilePaths.Normalize(request.Path);
-            var restored = await trash.RestoreAsync(await library.RootAsync(ct), request.BatchId.Trim(), only, ct);
+            var restored = await trash.RestoreAsync(await library.StoreAsync(ct), request.BatchId.Trim(), only, ct);
             return Results.Ok(new { restored, detail = restored == 0 ? "Nothing to put back - it may already be gone." : $"Put back {restored} file(s)." });
         });
 
         // ---- admin: drives and jobs -------------------------------------------------------
 
         var admin = enabled.MapGroup("").RequireAuthorization("AdminOnly");
+
+        // ---- admin: where the library lives ----------------------------------------------
+
+        // Signs in (saving the sign-in when one is given and works) and proves this server can
+        // make, write and delete a file there - nothing about the library changes.
+        admin.MapPost("/library/test", async (FamilyLibraryLocationRequest request, FamilyFilesLocations locations, CancellationToken ct) =>
+        {
+            var (error, _, detail) = await CheckLibraryAsync(request, locations, ct);
+            return error ?? Results.Ok(new { detail });
+        });
+
+        // The same check, then the library moves there. Files already in the old place stay
+        // where they are; "bring files back" from a drive fills the new place.
+        admin.MapPut("/library", async (FamilyLibraryLocationRequest request, FamilyFilesLocations locations, AppSettingsFile settings,
+            FamilyFilesIndex index, FamilyFilesStateFile stateFile, CancellationToken ct) =>
+        {
+            var (error, location, detail) = await CheckLibraryAsync(request, locations, ct);
+            if (error is not null) return error;
+            var options = await locations.OptionsAsync(ct);
+            var changed = !string.Equals(options.LibraryFolder?.Trim() ?? "", location, StringComparison.Ordinal);
+            options.LibraryFolder = location;
+            await settings.MergeSectionAsync(FamilyFilesSettingsDto.SectionName, options, ct);
+            if (changed)
+            {
+                await index.ClearAsync(ct);
+                await stateFile.UpdateAsync(s => s with { IndexedUtc = null, LibraryFiles = 0, LibraryBytes = 0, Duplicates = null }, ct);
+            }
+            return Results.Ok(new { detail = changed ? $"The library is now {locations.StoreFor(location).Root}. {detail}" : detail, libraryFolder = locations.StoreFor(location).Root });
+        });
 
         admin.MapDelete("/trash", async (FamilyFilesTrash trash, CancellationToken ct) =>
         {
@@ -306,6 +380,73 @@ public static class FamilyFilesEndpoints
                 : Busy(jobs));
 
         enabled.MapGet("/job", (FamilyFilesJobs jobs) => Results.Ok(new { job = jobs.Current }));
+    }
+
+    private static async Task<(IResult? Error, string Location, string Detail)> CheckLibraryAsync(
+        FamilyLibraryLocationRequest request, FamilyFilesLocations locations, CancellationToken ct)
+    {
+        if (FamilyLibraryLocation.Normalize(request.Location, out var problem) is not { } location)
+            return (Results.BadRequest(new { error = problem }), "", "");
+        var network = locations.Network;
+        try
+        {
+            if (FamilyLibraryLocation.IsNetwork(location))
+            {
+                if (network is null) return (Results.BadRequest(new { error = "This server can't reach shared folders." }), "", "");
+                MediaNetworkPath.TryParse(location, out var path);
+                var computer = path with { Share = "", Rest = "" };
+                var existing = network.Computers.ForHost(computer.HostKey);
+                var username = request.Username?.Trim() ?? "";
+                var domain = request.Domain?.Trim() ?? "";
+                if (domain.Length == 0 && username.Contains('\\'))
+                {
+                    var slash = username.IndexOf('\\');
+                    (domain, username) = (username[..slash], username[(slash + 1)..]);
+                }
+                if (username.Length > 0)
+                {
+                    var password = string.IsNullOrEmpty(request.Password) && existing is not null && string.Equals(existing.Username, username, StringComparison.OrdinalIgnoreCase)
+                        ? existing.Password
+                        : request.Password ?? "";
+                    var candidate = new MediaNetworkComputer(existing?.Id ?? Guid.NewGuid(), computer.HostWithPort, username, password, domain,
+                        existing?.CreatedAt ?? DateTimeOffset.UtcNow, existing?.Name);
+                    await Task.Run(() => network.ListShares(computer, candidate), ct);
+                    // Shared with Movies: one sign-in per computer.
+                    network.Computers.Save(candidate);
+                }
+            }
+
+            var store = locations.StoreFor(location);
+            var detail = await Task.Run(() =>
+            {
+                store.CreateFolder("");
+                var probe = $".sentinelcore-write-check-{Guid.NewGuid():N}";
+                using (var output = store.CreateNew(probe))
+                {
+                    output.Write("Sentinel Core checking it can write here."u8);
+                    output.Flush();
+                }
+                var written = store.Stat(probe);
+                store.DeleteFile(probe);
+                if (written is not { Size: > 0 }) throw new IOException("A test file came out empty - the disk may be full.");
+                var inside = store.List("")?.Count(e => !e.Name.StartsWith('.')) ?? 0;
+                return $"Reached {store.Root} and wrote a test file there" +
+                    (inside == 0 ? "; it is empty." : $"; it already holds {inside} file(s) and folder(s) at the top, which will show in the library.");
+            }, ct);
+            return (null, location, detail);
+        }
+        catch (MediaNetworkException exception)
+        {
+            return (Results.BadRequest(new { error = exception.Message, needsLogin = exception.NeedsLogin }), "", "");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return (Results.BadRequest(new { error = $"{exception.Message} The account needs permission to change files in that folder, not just read them.", needsLogin = true }), "", "");
+        }
+        catch (IOException exception)
+        {
+            return (Results.BadRequest(new { error = exception.Message }), "", "");
+        }
     }
 
     private static async Task<IResult> SaveDriveAsync(FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, CancellationToken ct)

@@ -1714,9 +1714,24 @@ runs the comparison without moving anything; **check and remove** does the full 
 away. The report on the drives screen shows what was kept and what was retired, and retired copies
 sit in the trash like any other deletion, so an unwanted removal is one press from undone.
 
+**Keeping the library on another computer.** The library doesn't have to be on the server: it can
+live in a folder shared from another computer on your network — a Linux box running Samba, a
+Windows PC, or a NAS. On the drives screen, **library location → change** → *A shared folder on
+another computer*, type its address (`smb://192.168.1.20/Family/Files`, or `\\DESKTOP-PC\Family`),
+the username and password for that computer, and press **test**: the server signs in and writes
+(then removes) a small test file to prove it may change files there. **use this location** switches
+over. Nothing is mounted on the server; it talks to the other computer itself, so it works the
+same whether the server runs Linux or Windows. On Windows, share the folder and give the account
+*Change* permission; on Linux, add a Samba share with `writable = yes` and run `smbpasswd -a` for
+the user. The sign-in is saved for that computer and shared with any Movies libraries on it. The
+trash and the duplicate index stay on the server, and if the other computer is off, the FILES tab
+says so instead of listing — nothing is lost, it just waits. Switching location never moves files:
+copy them across yourself, or use **bring files back** from a backup drive.
+
 **Settings → Family Files** holds the switches: on/off (turning it off hides the tab and stops the
-nightly pass but deletes nothing), the **library folder** (set a full path on a big disk before
-adding much — it isn't moved for you later), the largest file anyone can add, the nightly time,
+nightly pass but deletes nothing), the **library folder** (a full path on a big disk, or
+`smb://computer/Share/folder` for another computer — set it before adding much, it isn't moved for
+you later), the largest file anyone can add, the nightly time,
 remove-duplicates, and how long the trash keeps things. The library is deliberately *not* part of
 the backup file in [section 7](#7-the-settings-tab): it can be far bigger than everything else put
 together, and the drives are its backup.

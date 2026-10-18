@@ -880,7 +880,8 @@ public sealed class FamilyFilesSettingsDto : IValidatableObject
 
     public bool Enabled { get; set; } = true;
 
-    // Blank means <data>/family-files/library. A full path moves the library to a bigger disk;
+    // Blank means <data>/family-files/library. A full path moves the library to a bigger disk,
+    // smb://computer/Share/folder to a shared folder on another computer (FamilyFilesStore.cs);
     // the files already there are not moved automatically.
     public string LibraryFolder { get; set; } = string.Empty;
 
@@ -904,8 +905,7 @@ public sealed class FamilyFilesSettingsDto : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (!string.IsNullOrWhiteSpace(LibraryFolder) && !Path.IsPathRooted(LibraryFolder.Trim()))
-            yield return new ValidationResult(
-                "The library folder must be a full path, e.g. /mnt/bigdisk/family-files, or blank for the default.", [nameof(LibraryFolder)]);
+        if (FamilyLibraryLocation.Normalize(LibraryFolder, out var problem) is null)
+            yield return new ValidationResult(problem, [nameof(LibraryFolder)]);
     }
 }

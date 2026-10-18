@@ -8,10 +8,10 @@ using FileAttributes = SMBLibrary.FileAttributes;
 
 namespace SentinelCore.Tests;
 
-// A real SMB2 server on a loopback port, sharing local folders read-only - what the network
-// library tests talk to in place of a Windows PC or a NAS. SMBLibrary's own server, with a small
-// read-only file store over a directory (the library's disk-backed stores live in packages this
-// repo does not use).
+// A real SMB2 server on a loopback port, sharing local folders - what the network library tests
+// talk to in place of a Windows PC or a NAS. SMBLibrary's own server, with a small file store over
+// a directory (the library's disk-backed stores live in packages this repo does not use). Read-only
+// unless `writable`, which the Family Files tests need: new files, writes, renames, deletes.
 public sealed class TestSmbServer : IDisposable
 {
     public const string Username = "family";
@@ -19,11 +19,11 @@ public sealed class TestSmbServer : IDisposable
 
     private readonly PortSmbServer _server;
 
-    public TestSmbServer(IReadOnlyDictionary<string, string> shares, bool allowGuests = false)
+    public TestSmbServer(IReadOnlyDictionary<string, string> shares, bool allowGuests = false, bool writable = false)
     {
         var collection = new SMBShareCollection();
         foreach (var (name, folder) in shares)
-            collection.Add(new FileSystemShare(name, new ReadOnlyDirectoryStore(folder)));
+            collection.Add(new FileSystemShare(name, new DirectoryStore(folder, writable)));
         var ntlm = new IndependentNTLMAuthenticationProvider(user =>
             string.Equals(user, Username, StringComparison.OrdinalIgnoreCase) ? Password
             : allowGuests && (user.Length == 0 || string.Equals(user, "guest", StringComparison.OrdinalIgnoreCase)) ? ""
@@ -63,13 +63,16 @@ public sealed class TestSmbServer : IDisposable
 
     private sealed class Handle(string path, bool isDirectory)
     {
-        public string Path { get; } = path;
+        public string Path { get; set; } = path;
         public bool IsDirectory { get; } = isDirectory;
         public FileStream? Stream { get; set; }
+        public bool DeletePending { get; set; }
     }
 
-    private sealed class ReadOnlyDirectoryStore(string root) : INTFileStore
+    private sealed class DirectoryStore(string root, bool writable) : INTFileStore
     {
+        private const AccessMask WriteAccess = AccessMask.GENERIC_WRITE | (AccessMask)FileAccessMask.FILE_WRITE_DATA;
+
         private string Full(string path)
         {
             var relative = path.Replace('\\', System.IO.Path.DirectorySeparatorChar).TrimStart(System.IO.Path.DirectorySeparatorChar);
@@ -81,8 +84,18 @@ public sealed class TestSmbServer : IDisposable
         {
             handle = null!;
             fileStatus = FileStatus.FILE_DOES_NOT_EXIST;
-            if (createDisposition is not (CreateDisposition.FILE_OPEN or CreateDisposition.FILE_OPEN_IF)) return NTStatus.STATUS_ACCESS_DENIED;
             var full = Full(path);
+            if (writable && createDisposition == CreateDisposition.FILE_CREATE && (createOptions & CreateOptions.FILE_DIRECTORY_FILE) == 0)
+            {
+                if (File.Exists(full) || Directory.Exists(full)) return NTStatus.STATUS_OBJECT_NAME_COLLISION;
+                if (!Directory.Exists(System.IO.Path.GetDirectoryName(full))) return NTStatus.STATUS_OBJECT_PATH_NOT_FOUND;
+                handle = new Handle(full, false) { Stream = new FileStream(full, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete) };
+                fileStatus = FileStatus.FILE_CREATED;
+                return NTStatus.STATUS_SUCCESS;
+            }
+            if (createDisposition is not (CreateDisposition.FILE_OPEN or CreateDisposition.FILE_OPEN_IF)) return NTStatus.STATUS_ACCESS_DENIED;
+            if (!writable && (desiredAccess & (WriteAccess | AccessMask.DELETE)) != 0 && (createOptions & CreateOptions.FILE_DIRECTORY_FILE) == 0)
+                return NTStatus.STATUS_ACCESS_DENIED;
             // The one write it allows: a new folder (the folder picker's "New folder").
             if (createDisposition == CreateDisposition.FILE_OPEN_IF && (createOptions & CreateOptions.FILE_DIRECTORY_FILE) != 0
                 && !Directory.Exists(full) && !File.Exists(full) && Directory.Exists(System.IO.Path.GetDirectoryName(full)))
@@ -93,8 +106,10 @@ public sealed class TestSmbServer : IDisposable
             if ((createOptions & CreateOptions.FILE_DIRECTORY_FILE) != 0 && !isDirectory) return NTStatus.STATUS_NOT_A_DIRECTORY;
             if ((createOptions & CreateOptions.FILE_NON_DIRECTORY_FILE) != 0 && isDirectory) return NTStatus.STATUS_FILE_IS_A_DIRECTORY;
             var opened = new Handle(full, isDirectory);
-            if (!isDirectory && (desiredAccess & (AccessMask.GENERIC_READ | (AccessMask)FileAccessMask.FILE_READ_DATA)) != 0)
-                opened.Stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (!isDirectory && writable && (desiredAccess & WriteAccess) != 0)
+                opened.Stream = new FileStream(full, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+            else if (!isDirectory && (desiredAccess & (AccessMask.GENERIC_READ | (AccessMask)FileAccessMask.FILE_READ_DATA)) != 0)
+                opened.Stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             handle = opened;
             fileStatus = FileStatus.FILE_OPENED;
             return NTStatus.STATUS_SUCCESS;
@@ -102,7 +117,13 @@ public sealed class TestSmbServer : IDisposable
 
         public NTStatus CloseFile(object handle)
         {
-            ((Handle)handle).Stream?.Dispose();
+            var opened = (Handle)handle;
+            opened.Stream?.Dispose();
+            if (opened.DeletePending)
+            {
+                if (opened.IsDirectory) Directory.Delete(opened.Path);
+                else File.Delete(opened.Path);
+            }
             return NTStatus.STATUS_SUCCESS;
         }
 
@@ -188,11 +209,58 @@ public sealed class TestSmbServer : IDisposable
             return NTStatus.STATUS_NOT_SUPPORTED;
         }
 
-        public NTStatus WriteFile(out int numberOfBytesWritten, object handle, long offset, byte[] data) { numberOfBytesWritten = 0; return NTStatus.STATUS_ACCESS_DENIED; }
+        public NTStatus WriteFile(out int numberOfBytesWritten, object handle, long offset, byte[] data)
+        {
+            numberOfBytesWritten = 0;
+            var opened = (Handle)handle;
+            if (!writable || opened.Stream is not { CanWrite: true } stream) return NTStatus.STATUS_ACCESS_DENIED;
+            stream.Position = offset;
+            stream.Write(data, 0, data.Length);
+            stream.Flush();
+            numberOfBytesWritten = data.Length;
+            return NTStatus.STATUS_SUCCESS;
+        }
         public NTStatus FlushFileBuffers(object handle) => NTStatus.STATUS_SUCCESS;
         public NTStatus LockFile(object handle, long byteOffset, long length, bool exclusiveLock) => NTStatus.STATUS_NOT_SUPPORTED;
         public NTStatus UnlockFile(object handle, long byteOffset, long length) => NTStatus.STATUS_NOT_SUPPORTED;
-        public NTStatus SetFileInformation(object handle, FileInformation information) => NTStatus.STATUS_ACCESS_DENIED;
+        public NTStatus SetFileInformation(object handle, FileInformation information)
+        {
+            if (!writable) return NTStatus.STATUS_ACCESS_DENIED;
+            var opened = (Handle)handle;
+            switch (information)
+            {
+                case FileRenameInformationType2 rename:
+                {
+                    var target = Full(rename.FileName);
+                    if ((File.Exists(target) || Directory.Exists(target)) && !rename.ReplaceIfExists) return NTStatus.STATUS_OBJECT_NAME_COLLISION;
+                    if (!Directory.Exists(System.IO.Path.GetDirectoryName(target))) return NTStatus.STATUS_OBJECT_PATH_NOT_FOUND;
+                    var position = opened.Stream?.Position;
+                    var access = opened.Stream?.CanWrite == true ? FileAccess.ReadWrite : FileAccess.Read;
+                    opened.Stream?.Dispose();
+                    if (opened.IsDirectory) Directory.Move(opened.Path, target);
+                    else File.Move(opened.Path, target, rename.ReplaceIfExists);
+                    opened.Path = target;
+                    if (position is { } at)
+                        opened.Stream = new FileStream(target, FileMode.Open, access, FileShare.ReadWrite | FileShare.Delete) { Position = at };
+                    return NTStatus.STATUS_SUCCESS;
+                }
+                case FileDispositionInformation disposition:
+                    if (opened.IsDirectory && disposition.DeletePending && Directory.EnumerateFileSystemEntries(opened.Path).Any())
+                        return NTStatus.STATUS_DIRECTORY_NOT_EMPTY;
+                    opened.DeletePending = disposition.DeletePending;
+                    return NTStatus.STATUS_SUCCESS;
+                case FileBasicInformation basic:
+                    if (basic.LastWriteTime.Time is { } written)
+                    {
+                        opened.Stream?.Flush();
+                        if (opened.IsDirectory) Directory.SetLastWriteTimeUtc(opened.Path, written);
+                        else File.SetLastWriteTimeUtc(opened.Path, written);
+                    }
+                    return NTStatus.STATUS_SUCCESS;
+                default:
+                    return NTStatus.STATUS_NOT_SUPPORTED;
+            }
+        }
         public NTStatus SetFileSystemInformation(FileSystemInformation information) => NTStatus.STATUS_ACCESS_DENIED;
         public NTStatus GetSecurityInformation(out SecurityDescriptor result, object handle, SecurityInformation securityInformation) { result = null!; return NTStatus.STATUS_NOT_SUPPORTED; }
         public NTStatus SetSecurityInformation(object handle, SecurityInformation securityInformation, SecurityDescriptor securityDescriptor) => NTStatus.STATUS_ACCESS_DENIED;

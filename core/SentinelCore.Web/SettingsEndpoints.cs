@@ -257,10 +257,20 @@ public static class SettingsEndpoints
             return await SaveSectionAsync(dto, appSettings, AutoExportSettingsDto.SectionName, ct);
         });
 
-        settings.MapPut("/family-files", async (FamilyFilesSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        settings.MapPut("/family-files", async (FamilyFilesSettingsDto dto, AppSettingsFile appSettings, FamilyFilesIndex index,
+            FamilyFilesStateFile familyState, CancellationToken ct) =>
         {
-            dto.LibraryFolder = dto.LibraryFolder?.Trim() ?? string.Empty;
-            return await SaveSectionAsync(dto, appSettings, FamilyFilesSettingsDto.SectionName, ct);
+            dto.LibraryFolder = FamilyLibraryLocation.Normalize(dto.LibraryFolder, out _) ?? dto.LibraryFolder?.Trim() ?? string.Empty;
+            var before = (await appSettings.GetSectionAsync<FamilyFilesSettingsDto>(FamilyFilesSettingsDto.SectionName, ct))?.LibraryFolder ?? "";
+            var result = await SaveSectionAsync(dto, appSettings, FamilyFilesSettingsDto.SectionName, ct);
+            // A different library: the hashes and counts were about the old one.
+            if (!string.Equals(before, dto.LibraryFolder, StringComparison.Ordinal)
+                && (await appSettings.GetSectionAsync<FamilyFilesSettingsDto>(FamilyFilesSettingsDto.SectionName, ct))?.LibraryFolder == dto.LibraryFolder)
+            {
+                await index.ClearAsync(ct);
+                await familyState.UpdateAsync(s => s with { IndexedUtc = null, LibraryFiles = 0, LibraryBytes = 0, Duplicates = null }, ct);
+            }
+            return result;
         });
 
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
