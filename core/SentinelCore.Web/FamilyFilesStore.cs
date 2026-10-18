@@ -25,8 +25,10 @@ public interface IFamilyLibraryStore
     // What is directly inside a folder, or null when the folder isn't there.
     IReadOnlyList<FamilyStoreEntry>? List(string folder);
 
-    // Every file below a folder. Hidden folders (".something") are not walked into.
-    IEnumerable<FamilyStoreEntry> Walk(string folder);
+    // Every file below a folder. Hidden folders (".something") are not walked into. A folder that
+    // can't be read is reported to `unreadable` (and skipped) rather than looking empty, so a
+    // backup never mistakes "couldn't read it tonight" for "it was deleted".
+    IEnumerable<FamilyStoreEntry> Walk(string folder, Action<string>? unreadable = null);
 
     // Makes the folder and any missing parents; one already there is fine.
     void CreateFolder(string relative);
@@ -93,6 +95,25 @@ public static class FamilyLibraryLocation
     }
 }
 
+// A backup drive inside the library (or the library inside a drive) would back the library up
+// into itself: the duplicate check would then retire the copies, or the originals.
+public static class FamilyFolderOverlap
+{
+    public static string? Describe(string library, string? driveFolder)
+    {
+        if (string.IsNullOrWhiteSpace(driveFolder) || !Path.IsPathRooted(driveFolder.Trim())) return null;
+        var a = Tidy(library);
+        var b = Tidy(driveFolder.Trim());
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        if (string.Equals(a, b, comparison)) return "A backup drive can't be the library folder itself.";
+        if (b.StartsWith(a + Path.DirectorySeparatorChar, comparison)) return "A backup drive can't be inside the library folder - it would back the library up into itself.";
+        if (a.StartsWith(b + Path.DirectorySeparatorChar, comparison)) return "The library folder can't be inside a backup drive's folder.";
+        return null;
+    }
+
+    private static string Tidy(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+}
+
 public sealed class LocalFamilyLibraryStore(string root) : IFamilyLibraryStore
 {
     public string Root => root;
@@ -126,16 +147,28 @@ public sealed class LocalFamilyLibraryStore(string root) : IFamilyLibraryStore
         return entries;
     }
 
-    public IEnumerable<FamilyStoreEntry> Walk(string folder)
+    // Follows folder symlinks, as Directory.EnumerateFiles does.
+    public IEnumerable<FamilyStoreEntry> Walk(string folder, Action<string>? unreadable = null)
     {
-        var start = Disk(folder);
-        if (!Directory.Exists(start)) yield break;
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 };
-        foreach (var file in new DirectoryInfo(start).EnumerateFiles("*", options))
+        if (!Directory.Exists(Disk(folder))) yield break;
+        var pending = new Stack<string>();
+        pending.Push(folder);
+        while (pending.Count > 0)
         {
-            var relative = FamilyFilePaths.FromDisk(root, file.FullName);
-            if (relative.Split('/').SkipLast(1).Any(segment => segment.StartsWith('.'))) continue;
-            yield return new FamilyStoreEntry(relative, file.Name, false, file.Length, file.LastWriteTimeUtc);
+            var current = pending.Pop();
+            List<FileSystemInfo> entries;
+            try { entries = new DirectoryInfo(Disk(current)).EnumerateFileSystemInfos().ToList(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                unreadable?.Invoke(current.Length == 0 ? "(the top of the library)" : current);
+                continue;
+            }
+            foreach (var entry in entries)
+            {
+                var relative = FamilyFilePaths.Combine(current, entry.Name);
+                if (entry is DirectoryInfo) { if (!entry.Name.StartsWith('.')) pending.Push(relative); }
+                else if (entry is FileInfo file) yield return new FamilyStoreEntry(relative, file.Name, false, file.Length, file.LastWriteTimeUtc);
+            }
         }
     }
 
@@ -241,7 +274,7 @@ public sealed class NetworkFamilyLibraryStore(string root, MediaNetworkFileSyste
         catch (DirectoryNotFoundException) { return null; }
     }
 
-    public IEnumerable<FamilyStoreEntry> Walk(string folder)
+    public IEnumerable<FamilyStoreEntry> Walk(string folder, Action<string>? unreadable = null)
     {
         var pending = new Stack<string>();
         pending.Push(folder);
@@ -250,7 +283,14 @@ public sealed class NetworkFamilyLibraryStore(string root, MediaNetworkFileSyste
             var current = pending.Pop();
             IReadOnlyList<FamilyStoreEntry>? entries;
             try { entries = List(current); }
-            catch (UnauthorizedAccessException) { continue; }
+            // The computer itself being unreachable stops the whole walk; one folder it won't
+            // show is reported and skipped.
+            catch (MediaNetworkException) { throw; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                unreadable?.Invoke(current.Length == 0 ? "(the top of the library)" : current);
+                continue;
+            }
             if (entries is null) continue;
             foreach (var entry in entries)
             {

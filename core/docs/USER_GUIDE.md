@@ -1699,6 +1699,8 @@ feature wrote there. Each drive shows when it was last backed up to, how much is
 space it has left, and what went wrong if something did. A night that doesn't fully complete is
 retried hourly a few times and reported on your alert channels once.
 
+**What a backup will never do.** A drive only ever loses a file that this library put there and that has since left the library — and even then the nightly pass is careful: if the library folder isn't there (a disk that didn't mount, a share that was renamed), nothing is backed up or removed and you get an alert; if part of the library can't be read that night, nothing is removed; if far more than usual has left the library at once (more than a quarter of the drive, at least 10 files), the removal is held back with a "held" result until you press **back up now** for that drive. A file already on the drive that the library didn't put there is never overwritten — an identical one is simply counted as backed up, a different one is reported. Pointing the library at a new location starts a fresh backup on each drive and leaves the old library's files there untouched, ready for **bring files back**. A backup drive can't be inside the library folder, or the library inside a drive.
+
 **Bringing files back.** If the server is lost, restore your backup file onto a new one (that
 brings the drives' settings back), plug the drive in or point at the NAS again, and press **bring
 files back**: anything on the drive that the library doesn't have is copied in. Nothing already in

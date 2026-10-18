@@ -357,7 +357,8 @@ struct DriveRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             if let message = drive.lastMessage, !message.isEmpty {
-                Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                // A held-back removal explains itself and says what to press, so show all of it.
+                Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(drive.lastResult == "held" ? nil : 3)
             }
             if showsDetails {
                 HStack(spacing: 12) {
@@ -381,6 +382,7 @@ struct DriveRow: View {
         case "ok": "Backed up"
         case "failed": "Failed"
         case "incomplete": "Incomplete"
+        case "held": "Held back"
         default: "Last attempt"
         }
     }
@@ -401,7 +403,7 @@ struct ResultDot: View {
         switch result {
         case "ok": SentinelTheme.green
         case "failed": SentinelTheme.red
-        case "incomplete": SentinelTheme.amber
+        case "incomplete", "held": SentinelTheme.amber
         default: .secondary
         }
     }

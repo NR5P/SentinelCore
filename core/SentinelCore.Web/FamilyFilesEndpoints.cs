@@ -249,18 +249,18 @@ public static class FamilyFilesEndpoints
 
         // Signs in (saving the sign-in when one is given and works) and proves this server can
         // make, write and delete a file there - nothing about the library changes.
-        admin.MapPost("/library/test", async (FamilyLibraryLocationRequest request, FamilyFilesLocations locations, CancellationToken ct) =>
+        admin.MapPost("/library/test", async (FamilyLibraryLocationRequest request, FamilyFilesLocations locations, FamilyDriveStore drives, CancellationToken ct) =>
         {
-            var (error, _, detail) = await CheckLibraryAsync(request, locations, ct);
+            var (error, _, detail) = await CheckLibraryAsync(request, locations, drives, ct);
             return error ?? Results.Ok(new { detail });
         });
 
         // The same check, then the library moves there. Files already in the old place stay
         // where they are; "bring files back" from a drive fills the new place.
         admin.MapPut("/library", async (FamilyLibraryLocationRequest request, FamilyFilesLocations locations, AppSettingsFile settings,
-            FamilyFilesIndex index, FamilyFilesStateFile stateFile, CancellationToken ct) =>
+            FamilyFilesIndex index, FamilyFilesStateFile stateFile, FamilyDriveStore drives, CancellationToken ct) =>
         {
-            var (error, location, detail) = await CheckLibraryAsync(request, locations, ct);
+            var (error, location, detail) = await CheckLibraryAsync(request, locations, drives, ct);
             if (error is not null) return error;
             var options = await locations.OptionsAsync(ct);
             var changed = !string.Equals(options.LibraryFolder?.Trim() ?? "", location, StringComparison.Ordinal);
@@ -286,17 +286,17 @@ public static class FamilyFilesEndpoints
             return Results.Ok(new { drives = (await drives.GetAllAsync(ct)).Select(d => d.Public(state.Drives.GetValueOrDefault(d.Id), admin: true)).ToList() });
         });
 
-        admin.MapPost("/drives", async (FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, CancellationToken ct) =>
+        admin.MapPost("/drives", async (FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, FamilyFilesLocations locations, CancellationToken ct) =>
         {
             drive.Id = "";
-            return await SaveDriveAsync(drive, drives, stateFile, ct);
+            return await SaveDriveAsync(drive, drives, stateFile, locations, ct);
         });
 
-        admin.MapPut("/drives/{id}", async (string id, FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, CancellationToken ct) =>
+        admin.MapPut("/drives/{id}", async (string id, FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, FamilyFilesLocations locations, CancellationToken ct) =>
         {
             if (await drives.FindAsync(id, ct) is null) return Results.NotFound(new { error = "That drive is no longer set up." });
             drive.Id = id;
-            return await SaveDriveAsync(drive, drives, stateFile, ct);
+            return await SaveDriveAsync(drive, drives, stateFile, locations, ct);
         });
 
         admin.MapDelete("/drives/{id}", async (string id, FamilyDriveStore drives, FamilyFilesStateFile stateFile, CancellationToken ct) =>
@@ -313,12 +313,12 @@ public static class FamilyFilesEndpoints
 
         // Connects and reports what it finds. Takes the drive as sent, so the form can be tested
         // before it is saved; a blank password on an existing drive means "the saved one".
-        admin.MapPost("/drives/test", async (FamilyDrive drive, FamilyDriveStore drives, CancellationToken ct) =>
+        admin.MapPost("/drives/test", async (FamilyDrive drive, FamilyDriveStore drives, FamilyFilesLocations locations, CancellationToken ct) =>
         {
             drive.Normalized();
             if (drive.IsSftp && string.IsNullOrEmpty(drive.SftpPassword) && drive.Id.Length > 0 && await drives.FindAsync(drive.Id, ct) is { } saved)
                 drive.SftpPassword = saved.SftpPassword;
-            var problems = Validate(drive);
+            var problems = await ValidateAsync(drive, locations, ct);
             if (problems.Count > 0) return Results.BadRequest(new { error = string.Join(" ", problems), errors = problems });
             try
             {
@@ -334,7 +334,7 @@ public static class FamilyFilesEndpoints
         admin.MapPost("/drives/{id}/sync", async (string id, FamilyDriveStore drives, FamilyFilesJobs jobs, CancellationToken ct) =>
         {
             if (await drives.FindAsync(id, ct) is not { } drive) return Results.NotFound(new { error = "That drive is no longer set up." });
-            return jobs.TryStart(FamilyFilesJobs.KindSync, drive.Id, drive.Name, token => jobs.SyncDriveAsync(drive, null, token))
+            return jobs.TryStart(FamilyFilesJobs.KindSync, drive.Id, drive.Name, token => jobs.SyncDriveAsync(drive, null, FamilyDriveRemovals.Allowed, token))
                 ? Results.Accepted(null, new { started = true, detail = $"Backing up to {drive.Name} - progress shows on the Files tab." })
                 : Busy(jobs);
         });
@@ -355,8 +355,8 @@ public static class FamilyFilesEndpoints
                 return Results.BadRequest(new { error = "No backup drives are set up yet - add one on the Files tab." });
             var started = jobs.TryStart(FamilyFilesJobs.KindSync, null, null, async token =>
             {
-                var files = await jobs.IndexAsync(token);
-                foreach (var drive in enabledDrives) await jobs.SyncDriveAsync(drive, files, token);
+                var scan = await jobs.IndexAsync(token);
+                foreach (var drive in enabledDrives) await jobs.SyncDriveAsync(drive, scan, FamilyDriveRemovals.Allowed, token);
             });
             return started
                 ? Results.Accepted(null, new { started = true, detail = $"Backing up to {enabledDrives.Count} drive(s) - progress shows on the Files tab." })
@@ -383,7 +383,7 @@ public static class FamilyFilesEndpoints
     }
 
     private static async Task<(IResult? Error, string Location, string Detail)> CheckLibraryAsync(
-        FamilyLibraryLocationRequest request, FamilyFilesLocations locations, CancellationToken ct)
+        FamilyLibraryLocationRequest request, FamilyFilesLocations locations, FamilyDriveStore drives, CancellationToken ct)
     {
         if (FamilyLibraryLocation.Normalize(request.Location, out var problem) is not { } location)
             return (Results.BadRequest(new { error = problem }), "", "");
@@ -417,6 +417,10 @@ public static class FamilyFilesEndpoints
             }
 
             var store = locations.StoreFor(location);
+            if (store.LocalPath("") is { } local)
+                foreach (var drive in await drives.GetAllAsync(ct))
+                    if (!drive.IsSftp && FamilyFolderOverlap.Describe(local, drive.FolderPath) is { } overlap)
+                        return (Results.BadRequest(new { error = $"{overlap} (backup drive \"{drive.Name}\")" }), "", "");
             var detail = await Task.Run(() =>
             {
                 store.CreateFolder("");
@@ -449,23 +453,27 @@ public static class FamilyFilesEndpoints
         }
     }
 
-    private static async Task<IResult> SaveDriveAsync(FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile, CancellationToken ct)
+    private static async Task<IResult> SaveDriveAsync(FamilyDrive drive, FamilyDriveStore drives, FamilyFilesStateFile stateFile,
+        FamilyFilesLocations locations, CancellationToken ct)
     {
         drive.Normalized();
         if (drive.IsSftp && string.IsNullOrEmpty(drive.SftpPassword) && drive.Id.Length > 0 && await drives.FindAsync(drive.Id, ct) is { } saved)
             drive.SftpPassword = saved.SftpPassword;
-        var problems = Validate(drive);
+        var problems = await ValidateAsync(drive, locations, ct);
         if (problems.Count > 0) return Results.BadRequest(new { errors = problems });
         var stored = await drives.UpsertAsync(drive, ct);
         var state = await stateFile.LoadAsync(ct);
         return Results.Ok(stored.Public(state.Drives.GetValueOrDefault(stored.Id), admin: true));
     }
 
-    private static List<string> Validate(FamilyDrive drive)
+    private static async Task<List<string>> ValidateAsync(FamilyDrive drive, FamilyFilesLocations locations, CancellationToken ct)
     {
         var results = new List<ValidationResult>();
         Validator.TryValidateObject(drive, new ValidationContext(drive), results, validateAllProperties: true);
-        return results.Select(r => r.ErrorMessage ?? "Invalid.").ToList();
+        var problems = results.Select(r => r.ErrorMessage ?? "Invalid.").ToList();
+        if (!drive.IsSftp && (await locations.StoreAsync(ct)).LocalPath("") is { } library && FamilyFolderOverlap.Describe(library, drive.FolderPath) is { } overlap)
+            problems.Add(overlap);
+        return problems;
     }
 
     private static bool IsAdmin(HttpContext context) => context.User.IsInRole(nameof(AccountRole.Admin));

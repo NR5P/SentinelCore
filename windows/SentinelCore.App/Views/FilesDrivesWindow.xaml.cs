@@ -151,6 +151,7 @@ public partial class FilesDrivesWindow : Window
             {
                 "ok" => Palette.Green,
                 "failed" => Palette.Red,
+                "held" or "incomplete" => Palette.Amber,
                 _ => Palette.SecondaryText,
             },
         });
@@ -164,12 +165,12 @@ public partial class FilesDrivesWindow : Window
         });
         body.Children.Add(status);
 
-        if (drive.LastResult == "failed" && !string.IsNullOrWhiteSpace(drive.LastMessage))
+        if (drive.LastResult is "failed" or "held" && !string.IsNullOrWhiteSpace(drive.LastMessage))
         {
             body.Children.Add(new TextBlock
             {
                 Text = drive.LastMessage,
-                Foreground = Palette.Red,
+                Foreground = drive.LastResult == "held" ? Palette.Amber : Palette.Red,
                 FontSize = 11.5,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(16, 4, 0, 0),

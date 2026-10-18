@@ -344,7 +344,7 @@ private struct DrivesTVSection: View {
         switch result {
         case "ok": SentinelTheme.green
         case "failed": SentinelTheme.red
-        case "incomplete": SentinelTheme.amber
+        case "incomplete", "held": SentinelTheme.amber
         default: .secondary
         }
     }

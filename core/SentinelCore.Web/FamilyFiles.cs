@@ -122,6 +122,14 @@ public static class FamilyFilePaths
 
 public sealed record FamilyFileEntry(string Path, string Name, long Size, DateTimeOffset ModifiedUtc, string? Sha256, bool IsImage);
 public sealed record FamilyFolderEntry(string Path, string Name);
+// One pass over the whole library. `Unreadable` names the folders and files that couldn't be
+// read this time: they are not in `Files`, but that doesn't mean they are gone, so nothing may be
+// removed from a backup on the strength of an incomplete scan.
+public sealed record FamilyLibraryScan(IReadOnlyList<FamilyFileEntry> Files, IReadOnlyList<string> Unreadable)
+{
+    public bool Complete => Unreadable.Count == 0;
+}
+
 public sealed record FamilyFolderListing(string Path, IReadOnlyList<FamilyFolderEntry> Folders, IReadOnlyList<FamilyFileEntry> Files);
 
 // Where everything lives. The library folder is a setting (a household with a big disk points it
@@ -247,9 +255,10 @@ public sealed class FamilyFilesIndex(string path)
 
     // Walks the whole library: hashes anything new or changed, drops anything gone, saves, and
     // returns every file with its hash. `progress` gets (done, total) as it goes.
-    public async Task<IReadOnlyList<FamilyFileEntry>> RescanAsync(IFamilyLibraryStore store, Action<int, int>? progress, CancellationToken ct)
+    public async Task<FamilyLibraryScan> RescanAsync(IFamilyLibraryStore store, Action<int, int>? progress, CancellationToken ct)
     {
-        var files = await Task.Run(() => store.Walk("")
+        var unreadable = new List<string>();
+        var files = await Task.Run(() => store.Walk("", unreadable.Add)
             .Where(f => !FamilyFilesLibrary.IsHiddenOrPartial(f.Name) && FamilyFilePaths.Normalize(f.Path) == f.Path)
             .ToList(), ct);
 
@@ -265,8 +274,13 @@ public sealed class FamilyFilesIndex(string path)
             {
                 hash = await HashAsync(store, file, ct);
             }
-            catch (IOException) { done++; continue; }
-            catch (UnauthorizedAccessException) { done++; continue; }
+            catch (MediaNetworkException) { throw; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                unreadable.Add(file.Path);
+                done++;
+                continue;
+            }
             result.Add(new FamilyFileEntry(file.Path, file.Name, file.Size, file.ModifiedUtc, hash, FamilyFilePaths.IsImage(file.Name)));
             progress?.Invoke(++done, files.Count);
         }
@@ -280,7 +294,7 @@ public sealed class FamilyFilesIndex(string path)
         finally { _lock.Release(); }
 
         await SaveAsync(ct);
-        return result;
+        return new FamilyLibraryScan(result, unreadable);
     }
 
     public async Task SaveAsync(CancellationToken ct)
@@ -566,17 +580,24 @@ public sealed class FamilyFilesTrash(string root)
             Directory.CreateDirectory(folder);
 
             var files = new List<BatchFile>();
-            foreach (var (relative, kept) in items)
-            {
-                if (await Task.Run(() => library.Stat(relative), ct) is not { IsFolder: false } source) continue;
-                await library.MoveOutAsync(relative, FamilyFilePaths.ToDisk(folder, relative), ct);
-                files.Add(new BatchFile(relative, source.Size, kept));
-            }
-
             var batch = new Batch(id, now, reason, by, files);
-            await using (var stream = File.Create(Path.Combine(root, id + ".json")))
-                await JsonSerializer.SerializeAsync(stream, batch, Options, ct);
-            return batch;
+            try
+            {
+                foreach (var (relative, kept) in items)
+                {
+                    if (await Task.Run(() => library.Stat(relative), ct) is not { IsFolder: false } source) continue;
+                    await library.MoveOutAsync(relative, FamilyFilePaths.ToDisk(folder, relative), ct);
+                    files.Add(new BatchFile(relative, source.Size, kept));
+                }
+            }
+            finally
+            {
+                // Written even when a move failed partway (a dropped connection to the library's
+                // computer): what did reach the trash must show there, ready to put back.
+                await using var stream = File.Create(Path.Combine(root, id + ".json"));
+                await JsonSerializer.SerializeAsync(stream, batch with { Files = files.ToList() }, Options, CancellationToken.None);
+            }
+            return batch with { Files = files.ToList() };
         }
         finally { _lock.Release(); }
     }

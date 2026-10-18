@@ -287,8 +287,8 @@ public sealed class FamilyFilesTests : IDisposable
         // Something of the owner's already on the drive - never ours to touch.
         await File.WriteAllTextAsync(Path.Combine(driveFolder, "keep-me.txt"), "not yours", Ct);
 
-        var files = await index.RescanAsync(store, null, Ct);
-        var first = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
+        var files = (await index.RescanAsync(store, null, Ct)).Files;
+        var first = await FamilyDriveSync.MirrorAsync(drive, store, files, FamilyDriveRemovals.Allowed, null, NullLogger.Instance, Ct);
         Assert.True(first.Ok, first.Message);
         Assert.Equal(2, first.Copied);
         Assert.Equal(0, first.Removed);
@@ -296,20 +296,20 @@ public sealed class FamilyFilesTests : IDisposable
         Assert.True(File.Exists(Path.Combine(driveFolder, FamilyDriveManifest.FileName)));
 
         // A second pass with nothing changed copies nothing.
-        var second = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
+        var second = await FamilyDriveSync.MirrorAsync(drive, store, files, FamilyDriveRemovals.Allowed, null, NullLogger.Instance, Ct);
         Assert.Equal(0, second.Copied);
 
         // A file that left the library leaves the drive; the owner's own file stays.
         File.Delete(Path.Combine(library, "b.txt"));
-        files = await index.RescanAsync(store, null, Ct);
-        var third = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
+        files = (await index.RescanAsync(store, null, Ct)).Files;
+        var third = await FamilyDriveSync.MirrorAsync(drive, store, files, FamilyDriveRemovals.Allowed, null, NullLogger.Instance, Ct);
         Assert.Equal(1, third.Removed);
         Assert.False(File.Exists(Path.Combine(driveFolder, "b.txt")));
         Assert.Equal("not yours", await File.ReadAllTextAsync(Path.Combine(driveFolder, "keep-me.txt"), Ct));
 
         // A drive that was wiped behind the manifest's back is noticed and refilled.
         File.Delete(Path.Combine(driveFolder, "Photos", "a.jpg"));
-        var fourth = await FamilyDriveSync.MirrorAsync(drive, store, files, null, NullLogger.Instance, Ct);
+        var fourth = await FamilyDriveSync.MirrorAsync(drive, store, files, FamilyDriveRemovals.Allowed, null, NullLogger.Instance, Ct);
         Assert.Equal(1, fourth.Copied);
 
         // The library dies; the drive brings it back - the owner's file included, since it was

@@ -154,7 +154,7 @@ public sealed class FamilyFilesNetworkTests : IDisposable
         Assert.False(Directory.Exists(OnShare("Docs", "copy")));
 
         var drive = new FamilyDrive { Id = "usb", Name = "USB", Kind = FamilyDrive.KindFolder, FolderPath = driveFolder };
-        var synced = await jobs.SyncDriveAsync(drive, null, Ct);
+        var synced = await jobs.SyncDriveAsync(drive, null, FamilyDriveRemovals.Allowed, Ct);
         Assert.Equal("ok", synced.LastResult);
         Assert.Equal("the lease", await File.ReadAllTextAsync(Path.Combine(driveFolder, "Docs", "lease.pdf"), Ct));
         // The backup keeps the original's date, read from the other computer.

@@ -183,18 +183,30 @@ public sealed class FamilyFilesJobs(
         if (_current is { } current) _current = current with { Message = message, Done = done, Total = total };
     }
 
-    public async Task<IReadOnlyList<FamilyFileEntry>> IndexAsync(CancellationToken ct)
+    public async Task<FamilyLibraryScan> IndexAsync(CancellationToken ct)
     {
         var store = await library.StoreAsync(ct);
         Report("checking the library", 0, 0);
-        var files = await index.RescanAsync(store, (done, total) => Report("checking the library", done, total), ct);
+        // A library folder that isn't there (a disk not mounted, a share folder renamed) is a
+        // problem to report, not an empty library to back up - an empty library would look like
+        // everything was deleted. Only the default folder under the data directory is simply made.
+        if (await Task.Run(() => store.Stat(""), ct) is not { IsFolder: true })
+        {
+            if (store.LocalPath("") is { } local && string.Equals(Path.GetFullPath(local), Path.GetFullPath(locations.DefaultLibrary), StringComparison.Ordinal))
+                await Task.Run(() => store.CreateFolder(""), ct);
+            else
+                throw new IOException($"The library folder {store.Root} isn't there - is the disk connected, or the shared folder still shared? Nothing was backed up or removed.");
+        }
+        var scan = await index.RescanAsync(store, (done, total) => Report("checking the library", done, total), ct);
         await stateFile.UpdateAsync(s => s with
         {
             IndexedUtc = DateTimeOffset.UtcNow,
-            LibraryFiles = files.Count,
-            LibraryBytes = files.Sum(f => f.Size)
+            LibraryFiles = scan.Files.Count,
+            LibraryBytes = scan.Files.Sum(f => f.Size)
         }, ct);
-        return files;
+        if (!scan.Complete)
+            logger.LogWarning("Family files: {Count} folder(s)/file(s) couldn't be read, first {First}", scan.Unreadable.Count, scan.Unreadable[0]);
+        return scan;
     }
 
     // Groups the library by content. With `remove`, every copy but one goes to the trash; the
@@ -202,7 +214,8 @@ public sealed class FamilyFilesJobs(
     // is almost always the one that was there first and not buried in a "copy of" folder).
     public async Task<FamilyDuplicateReport> CheckDuplicatesAsync(bool remove, string? by, CancellationToken ct)
     {
-        var files = await IndexAsync(ct);
+        var scan = await IndexAsync(ct);
+        var files = scan.Files;
         Report("looking for duplicates", 0, 0);
 
         var groups = files
@@ -256,9 +269,13 @@ public sealed class FamilyFilesJobs(
         return report;
     }
 
-    public async Task<FamilyDriveState> SyncDriveAsync(FamilyDrive drive, IReadOnlyList<FamilyFileEntry>? files, CancellationToken ct)
+    // `removals`: Allowed when a person pressed "back up now", Guarded for the nightly pass. An
+    // incomplete scan always means Never.
+    public async Task<FamilyDriveState> SyncDriveAsync(FamilyDrive drive, FamilyLibraryScan? scan, FamilyDriveRemovals removals, CancellationToken ct)
     {
-        files ??= await IndexAsync(ct);
+        scan ??= await IndexAsync(ct);
+        var files = scan.Files;
+        if (!scan.Complete) removals = FamilyDriveRemovals.Never;
         var store = await library.StoreAsync(ct);
         var started = DateTimeOffset.UtcNow;
         if (_current is { } current) _current = current with { DriveId = drive.Id, DriveName = drive.Name };
@@ -267,13 +284,14 @@ public sealed class FamilyFilesJobs(
         FamilyDriveState outcome;
         try
         {
-            var result = await FamilyDriveSync.MirrorAsync(drive, store, files,
+            var result = await FamilyDriveSync.MirrorAsync(drive, store, files, removals,
                 (done, total, path) => Report($"backing up to {drive.Name}: {path}", done, total), logger, ct);
             outcome = new FamilyDriveState
             {
                 LastAttemptUtc = started,
                 LastSuccessUtc = result.Ok ? started : (await stateFile.LoadAsync(ct)).Drives.GetValueOrDefault(drive.Id)?.LastSuccessUtc,
-                LastResult = result.Ok ? "ok" : "failed",
+                // "held": backed up, but removals were kept back for a person to look at.
+                LastResult = !result.Ok ? "failed" : result.Held > 0 ? "held" : "ok",
                 LastMessage = result.Message,
                 LastFileCount = result.FileCount,
                 LastBytes = result.Bytes,
@@ -348,13 +366,16 @@ public sealed class FamilyFilesJobs(
                     ? $"moved {report.Copies} duplicate file(s) ({AutoExportRunner.FormatBytes(report.Bytes)}) to the trash"
                     : $"found {report.Copies} duplicate file(s) ({AutoExportRunner.FormatBytes(report.Bytes)}) - see the Files tab");
 
-            var files = await IndexAsync(ct);
+            var scan = await IndexAsync(ct);
+            if (!scan.Complete)
+                problems.Add($"{scan.Unreadable.Count} folder(s) or file(s) in the library couldn't be read (first: {scan.Unreadable[0]}), so nothing was removed from the drives tonight");
+            var files = scan.Files;
             var enabled = (await drives.GetAllAsync(ct)).Where(d => d.Enabled).ToList();
             var synced = 0;
             foreach (var drive in enabled)
             {
                 ct.ThrowIfCancellationRequested();
-                var outcome = await SyncDriveAsync(drive, files, ct);
+                var outcome = await SyncDriveAsync(drive, scan, FamilyDriveRemovals.Guarded, ct);
                 if (outcome.LastResult == "ok") synced++;
                 else problems.Add($"{drive.Name}: {outcome.LastMessage}");
             }

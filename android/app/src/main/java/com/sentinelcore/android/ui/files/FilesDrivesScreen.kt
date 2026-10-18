@@ -323,7 +323,10 @@ private fun DriveCard(
                     !drive.enabled -> StatusChip("OFF", SentinelTextDim)
                     drive.lastResult == "ok" -> StatusChip("OK", SentinelGreen)
                     drive.lastResult == "failed" -> StatusChip("FAILED", SentinelRed)
-                    else -> StatusChip("NOT YET RUN", SentinelAmber)
+                    // Backed up, but files that left the library were kept on the drive.
+                    drive.lastResult == "held" -> StatusChip("HELD BACK", SentinelAmber)
+                    drive.lastResult.isBlank() -> StatusChip("NOT YET RUN", SentinelAmber)
+                    else -> StatusChip(drive.lastResult.uppercase(), SentinelAmber)
                 }
             }
             Text(

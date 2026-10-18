@@ -225,11 +225,22 @@ public sealed class FamilyDriveManifest
 
     public int Version { get; set; } = 1;
     public DateTimeOffset WrittenUtc { get; set; }
+    // Which library these files are a backup of (its folder or smb:// address). A drive that
+    // backed up one library and is now handed another forgets the old list - so it never deletes
+    // the old library's backup - but keeps the files themselves. Null in manifests from before.
+    public string? Library { get; set; }
     public Dictionary<string, Entry> Files { get; set; } = new(StringComparer.Ordinal);
 }
 
+// What a backup may remove from a drive: files this feature wrote there that have since left the
+// library. Never after a scan that couldn't read everything; on the nightly pass, not a sudden
+// mass of them (a library folder that came up empty or was pointed somewhere new), which waits
+// for a person to press "back up now".
+public enum FamilyDriveRemovals { Never, Guarded, Allowed }
+
 public sealed record FamilyDriveSyncResult(
-    bool Ok, string Message, int FileCount, long Bytes, int Copied, int Removed, int Failed, long? FreeBytes, string? HostKey);
+    bool Ok, string Message, int FileCount, long Bytes, int Copied, int Removed, int Failed, long? FreeBytes, string? HostKey,
+    int Held = 0, int NotOurs = 0);
 
 public sealed record FamilyDriveRestoreResult(bool Ok, string Message, int Copied, long Bytes, int Skipped, int Failed);
 
@@ -241,6 +252,7 @@ public interface IFamilyDriveTarget : IAsyncDisposable
     Task<FamilyDriveManifest> ReadManifestAsync(CancellationToken ct);
     Task WriteManifestAsync(FamilyDriveManifest manifest, CancellationToken ct);
     Task<long?> SizeOfAsync(string relative, CancellationToken ct);
+    Task<string> HashOfAsync(string relative, CancellationToken ct);
     // `input` is the library's copy, read from wherever the library lives.
     Task UploadAsync(Stream input, DateTime modifiedUtc, string relative, long bytes, CancellationToken ct);
     Task DownloadAsync(string relative, string localPath, CancellationToken ct);
@@ -323,6 +335,12 @@ public sealed class FolderFamilyDriveTarget(string root) : IFamilyDriveTarget
         try { File.SetLastWriteTimeUtc(partial, modifiedUtc); }
         catch (IOException) { }
         File.Move(partial, target, overwrite: true);
+    }
+
+    public async Task<string> HashOfAsync(string relative, CancellationToken ct)
+    {
+        await using var input = new FileStream(FamilyFilePaths.ToDisk(root, relative), FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
+        return Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(input, ct));
     }
 
     public async Task DownloadAsync(string relative, string localPath, CancellationToken ct)
@@ -474,6 +492,16 @@ public sealed class SftpFamilyDriveTarget(FamilyDrive drive) : IFamilyDriveTarge
         await Client.RenameFileAsync(partial, path, ct);
     }
 
+    public async Task<string> HashOfAsync(string relative, CancellationToken ct)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        await using var input = await Client.OpenAsync(Remote(relative), FileMode.Open, FileAccess.Read, ct);
+        var buffer = new byte[1 << 16];
+        int read;
+        while ((read = await input.ReadAsync(buffer, ct)) > 0) sha.AppendData(buffer, 0, read);
+        return Convert.ToHexStringLower(sha.GetHashAndReset());
+    }
+
     public async Task DownloadAsync(string relative, string localPath, CancellationToken ct)
     {
         await using var output = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
@@ -583,16 +611,37 @@ public static class FamilyDriveSync
 {
     public delegate void Progress(int done, int total, string current);
 
+    // Removing more than this share of what a drive holds, on the nightly pass, is held back.
+    public const double MassRemovalShare = 0.25;
+    public const int MassRemovalFloor = 10;
+
     // Mirrors `library` (every file with its hash) onto the drive. Files already there with the
     // same hash and size are left alone; everything else is copied; files the manifest says we
-    // wrote that the library no longer has are removed.
+    // wrote that the library no longer has are removed, as `removals` allows. A file already on
+    // the drive that we didn't write is never overwritten: kept as it is when it is the same
+    // file, reported when it isn't.
     public static async Task<FamilyDriveSyncResult> MirrorAsync(
-        FamilyDrive drive, IFamilyLibraryStore source, IReadOnlyList<FamilyFileEntry> library, Progress? progress, ILogger logger, CancellationToken ct)
+        FamilyDrive drive, IFamilyLibraryStore source, IReadOnlyList<FamilyFileEntry> library, FamilyDriveRemovals removals,
+        Progress? progress, ILogger logger, CancellationToken ct)
     {
         await using var target = FamilyDriveTargets.Open(drive);
         await target.OpenAsync(ct);
         var manifest = await target.ReadManifestAsync(ct);
         var wanted = library.Where(f => f.Sha256 is not null).ToDictionary(f => f.Path, StringComparer.Ordinal);
+
+        // A backup of a different library: its files stay on the drive, untouched, and are no
+        // longer ours to remove or replace.
+        string? forgotFrom = null;
+        if (manifest.Library is { } previous && !string.Equals(previous, source.Root, StringComparison.Ordinal) && manifest.Files.Count > 0)
+        {
+            forgotFrom = previous;
+            logger.LogInformation("Drive {Drive} held a backup of {Previous}; keeping those {Count} file(s) and starting a backup of {Library}",
+                drive.Name, previous, manifest.Files.Count, source.Root);
+            manifest.Files.Clear();
+        }
+        manifest.Library = source.Root;
+        var notOurs = 0;
+        string? firstNotOurs = null;
 
         var copied = 0;
         var failed = 0;
@@ -619,6 +668,22 @@ public static class FamilyDriveSync
 
             try
             {
+                if (!manifest.Files.ContainsKey(file.Path) && await target.SizeOfAsync(file.Path, ct) is { } present)
+                {
+                    // Something at that name that this library didn't put there.
+                    if (present == file.Size && await target.HashOfAsync(file.Path, ct) == file.Sha256)
+                    {
+                        manifest.Files[file.Path] = new FamilyDriveManifest.Entry(file.Size, file.Sha256!);
+                        manifestDirty = true;
+                    }
+                    else
+                    {
+                        notOurs++;
+                        firstNotOurs ??= file.Path;
+                    }
+                    continue;
+                }
+
                 await using (var input = await Task.Run(() => source.OpenRead(file.Path), ct))
                     await target.UploadAsync(input, file.ModifiedUtc.UtcDateTime, file.Path, file.Size, ct);
                 manifest.Files[file.Path] = new FamilyDriveManifest.Entry(file.Size, file.Sha256!);
@@ -643,21 +708,31 @@ public static class FamilyDriveSync
 
         // Only after every copy succeeded: a night with copy failures is not one to also delete on.
         var removed = 0;
-        if (failed == 0)
+        var gone = manifest.Files.Keys.Where(k => !wanted.ContainsKey(k)).ToList();
+        var held = 0;
+        if (gone.Count > 0 && (removals == FamilyDriveRemovals.Never
+            || (removals == FamilyDriveRemovals.Guarded
+                && (wanted.Count == 0 || (gone.Count >= MassRemovalFloor && gone.Count > manifest.Files.Count * MassRemovalShare)))))
         {
-            foreach (var gone in manifest.Files.Keys.Where(k => !wanted.ContainsKey(k)).ToList())
+            held = gone.Count;
+            logger.LogWarning("Held back removing {Count} file(s) from drive {Drive} ({Why})", held, drive.Name,
+                removals == FamilyDriveRemovals.Never ? "the library couldn't all be read" : "far more than usual");
+        }
+        else if (failed == 0)
+        {
+            foreach (var path in gone)
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await target.DeleteAsync(gone, ct);
-                    manifest.Files.Remove(gone);
+                    await target.DeleteAsync(path, ct);
+                    manifest.Files.Remove(path);
                     manifestDirty = true;
                     removed++;
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SshException)
                 {
-                    logger.LogWarning(exception, "Could not remove {File} from drive {Drive}", gone, drive.Name);
+                    logger.LogWarning(exception, "Could not remove {File} from drive {Drive}", path, drive.Name);
                 }
             }
         }
@@ -666,13 +741,21 @@ public static class FamilyDriveSync
         await target.WriteManifestAsync(manifest, ct);
         var free = await target.FreeBytesAsync(ct);
 
-        var ok = failed == 0;
-        var message = ok
+        var ok = failed == 0 && notOurs == 0;
+        var message = failed == 0
             ? $"{wanted.Count} file(s), {AutoExportRunner.FormatBytes(bytes)} on the drive" +
               (copied > 0 ? $"; copied {copied}" : "; nothing new to copy") +
               (removed > 0 ? $"; removed {removed} no longer in the library" : "") + "."
             : $"{failed} file(s) could not be copied ({firstFailure}). {copied} copied; nothing was removed from the drive.";
-        return new FamilyDriveSyncResult(ok, message, wanted.Count, bytes, copied, removed, failed, free, target.HostKey);
+        if (forgotFrom is not null)
+            message += $" This drive had a backup of the library at {forgotFrom}; those files were left on it as they are.";
+        if (notOurs > 0)
+            message += $" {notOurs} file(s) were not backed up because the drive already has a different file of the same name that this library didn't put there (for example {firstNotOurs}) - rename or move it on the drive.";
+        if (held > 0)
+            message += removals == FamilyDriveRemovals.Never
+                ? $" {held} file(s) that seem to have left the library were kept on the drive, because part of the library couldn't be read this time."
+                : $" {held} file(s) that left the library were kept on the drive - far more than a nightly backup removes on its own. If they were meant to go, press 'back up now' for this drive.";
+        return new FamilyDriveSyncResult(ok, message, wanted.Count, bytes, copied, removed, failed, free, target.HostKey, held, notOurs);
     }
 
     // Copies anything on the drive that the library lacks back into the library. Nothing in the
