@@ -2,7 +2,6 @@ package com.sentinelcore.android.data
 
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -89,7 +88,8 @@ object WeatherWarningLogic {
         ends ?: return ""
         val at = ends.atZone(zone)
         val time = at.format(DateTimeFormatter.ofPattern(if (is24Hour) "HH:mm" else "h:mm a", locale))
-        val sameDay = at.toLocalDate() == LocalDate.ofInstant(now, zone)
+        // now.atZone, not LocalDate.ofInstant: that one is API 34 and crashes older phones.
+        val sameDay = at.toLocalDate() == now.atZone(zone).toLocalDate()
         return if (sameDay) "until $time" else "until ${at.dayOfWeek.getDisplayName(TextStyle.SHORT, locale)} $time"
     }
 }
