@@ -32,6 +32,10 @@ Submit **one request per category**:
 2. **Driving Task**: the alarm, devices, scenes and alerts. Apple reviews these case by case. If
    Apple turns it down, see "If Apple grants only Audio" below.
 
+**Submitted 2026-10-18** with Audio and Driving Task both ticked. The form had no description
+field, only checkboxes for the app type, so Apple reviews the app itself. The descriptions below are
+kept for a resubmission, or for any follow-up questions Apple asks by email.
+
 Fields, with text to paste:
 
 - **App name:** Sentinel Core
