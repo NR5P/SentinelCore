@@ -30,14 +30,19 @@ final class PushNotificationCoordinator {
             title: "View event",
             options: [.foreground]
         )
+        // Security alerts show on the CarPlay screen too (once the CarPlay entitlement is
+        // granted; until then the option is ignored). iPhone only - macOS has no such option.
+        #if os(iOS)
+        let options: UNNotificationCategoryOptions = [.allowInCarPlay]
+        #else
+        let options: UNNotificationCategoryOptions = []
+        #endif
         center.setNotificationCategories([
             UNNotificationCategory(
                 identifier: "SECURITY_EVENT",
                 actions: [viewAction],
                 intentIdentifiers: [],
-                // Security alerts show on the CarPlay screen too (once the CarPlay entitlement
-                // is granted; until then the option is ignored).
-                options: [.allowInCarPlay]
+                options: options
             )
         ])
     }
