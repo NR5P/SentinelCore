@@ -273,6 +273,9 @@ private fun AppShell(
         // they're usually opened from.
         currentRoute?.startsWith("audio/") == true && state.musicEnabled -> AppSection.MUSIC
         currentRoute?.startsWith("audio/") == true && state.podcastsEnabled -> AppSection.PODCASTS
+        // "Import a list" belongs to whichever tab's downloads it fills.
+        currentRoute?.startsWith("media-import/") == true ->
+            if (backStackEntry?.arguments?.getString("kind") == "music") AppSection.MUSIC else AppSection.MOVIES
         else -> AppSection.EVENTS
     }
     // The Device Hub's wall display is the one screen that takes the whole tablet: no bar, no

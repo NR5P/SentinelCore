@@ -39,6 +39,21 @@ extension MediaImportKind {
     }
 }
 
+#if os(macOS)
+// A Mac List cuts a section footer to one line, so a note too long for that is the section's last
+// row there instead.
+struct MacSectionNote: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+#endif
+
 // MARK: - The import sheet
 
 // Opens the import flow in its own sheet. `onStarted` runs with the number of albums or films
@@ -112,6 +127,8 @@ struct MediaImportView: View {
         }
     }
 
+    private static let startNote = "The server searches your sites for each one through the VPN, picks the best release with people sharing it, and keeps a few downloading at a time. You can close the app; it carries on, and the list shows under Downloads."
+
     // MARK: Choosing files
 
     @ViewBuilder
@@ -122,8 +139,13 @@ struct MediaImportView: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            #if os(macOS)
+            if let footer = kind.helpFooter { MacSectionNote(text: footer) }
+            #endif
         } footer: {
+            #if os(iOS)
             if let footer = kind.helpFooter { Text(footer) }
+            #endif
         }
         Section {
             Button {
@@ -200,10 +222,15 @@ struct MediaImportView: View {
                     TextField("", text: $name, prompt: Text("Name"))
                         .labelsHidden()
                         .multilineTextAlignment(.leading)
+                    #if os(macOS)
+                    MacSectionNote(text: Self.startNote)
+                    #endif
                 } header: {
                     Text("Name This List")
                 } footer: {
-                    Text("The server searches your sites for each one through the VPN, picks the best release with people sharing it, and keeps a few downloading at a time. You can close the app; it carries on, and the list shows under Downloads.")
+                    #if os(iOS)
+                    Text(Self.startNote)
+                    #endif
                 }
             }
             if let errorMessage {
