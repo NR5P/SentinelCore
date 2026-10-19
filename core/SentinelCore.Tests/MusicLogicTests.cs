@@ -22,6 +22,20 @@ public sealed class MusicLogicTests : IDisposable
     // MARK: - Names
 
     [Theory]
+    [InlineData("Rumours (Deluxe Edition)", "rumours")]
+    [InlineData("Rumours [2004 Remaster]", "rumours")]
+    [InlineData("Rumours - Remastered", "rumours")]
+    [InlineData("Greatest Hits (Club Edition)", "greatest hits")]
+    [InlineData("1989 (Taylor's Version) [Deluxe]", "1989 (taylor's version)")]
+    [InlineData("Abbey Road (Super Deluxe Edition) [2019 Remix]", "abbey road (super deluxe edition) [2019 remix]")]
+    [InlineData("Greatest Hits Vol. 2", "greatest hits vol. 2")]
+    [InlineData("Live at Leeds (Live)", "live at leeds (live)")]
+    [InlineData("Untitled (2023)", "untitled")]
+    [InlineData("(Deluxe)", "(deluxe)")]
+    public void EditionlessKey_DropsOnlyEditionWords(string title, string expected) =>
+        Assert.Equal(expected, MusicText.EditionlessKey(title));
+
+    [Theory]
     [InlineData("Fleetwood Mac", new[] { "Fleetwood Mac" })]
     [InlineData("Daft Punk feat. Pharrell Williams", new[] { "Daft Punk", "Pharrell Williams" })]
     [InlineData("Daft Punk ft. Pharrell Williams & Nile Rodgers", new[] { "Daft Punk", "Pharrell Williams", "Nile Rodgers" })]

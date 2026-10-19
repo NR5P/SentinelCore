@@ -48,6 +48,9 @@ public sealed class MusicDownloadGrabInput
     public Guid SearchId { get; set; }
     public string ReleaseId { get; set; } = string.Empty;
     public Guid? LibraryId { get; set; }
+    // An album already in the library: null asks (409 alreadyInLibrary), true downloads it again
+    // anyway (a better copy, say).
+    public bool? DownloadAgain { get; set; }
 }
 
 // Reads what a music torrent's name says about it, and ranks releases for one album. Pure, for

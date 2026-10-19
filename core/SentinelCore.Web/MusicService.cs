@@ -225,8 +225,9 @@ public sealed class MusicService(
     {
         var catalog = await catalogCache.GetAsync(cancellationToken);
         var artistKey = MusicText.Key(artist);
-        var albumKey = MusicText.Key(album);
-        return catalog.Albums.Any(a => MusicText.Key(a.Title) == albumKey
+        // Edition words don't count: "Rumours (Deluxe Edition)" here means "Rumours" is had.
+        var albumKey = MusicText.EditionlessKey(album);
+        return catalog.Albums.Any(a => MusicText.EditionlessKey(a.Title) == albumKey
             && (MusicText.Key(a.Artist) == artistKey || a.Tracks.Any(t => t.Artists.Any(n => MusicText.Key(n) == artistKey))));
     }
 

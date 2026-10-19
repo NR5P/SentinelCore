@@ -45,8 +45,16 @@ public sealed class MediaDownloadManager(
     // How long a search or download waits for the VPN and the services to come up.
     private TimeSpan StartTimeout => TimeSpan.FromSeconds(configuration.GetValue("MediaDownloads:StartTimeoutSeconds", 120));
     private static readonly TimeSpan SearchesKeptFor = TimeSpan.FromMinutes(30);
+    // How many copies one download tries before it gives up: the one picked, then two more after
+    // a stall (StallMinutes).
+    public const int MaxCopies = 3;
+    // Finished albums count as "had" for this long even before the library scan has found them,
+    // so a second list with the same album doesn't fetch it again in between.
+    private static readonly TimeSpan RecentlyFinished = TimeSpan.FromDays(2);
 
     private readonly ConcurrentDictionary<Guid, MediaDownloadSearch> _searches = new();
+    // Downloads whose look for another copy is running right now.
+    private readonly ConcurrentDictionary<Guid, byte> _findingCopy = new();
     private readonly SemaphoreSlim _queueLock = new(1, 1);
     private readonly SemaphoreSlim _startLock = new(1, 1);
     private readonly SemaphoreSlim _wake = new(0, int.MaxValue);
@@ -439,13 +447,19 @@ public sealed class MediaDownloadManager(
         if (search?.Album is not { } album) throw new MediaDownloadException("That search has expired. Search again.");
         var release = search.AlbumResults.FirstOrDefault(r => r.Id == input.ReleaseId) ?? throw new MediaDownloadException("That release is not in the search any more. Search again.");
         var library = await PickMusicLibraryAsync(input.LibraryId, cancellationToken);
+        if (input.DownloadAgain != true && music is not null && await music.HasAlbumAsync(album.Artist, album.Album, cancellationToken))
+            throw new MediaDownloadAlbumDuplicateException(album.Artist.Trim(), album.Album.Trim());
 
         await _queueLock.WaitAsync(cancellationToken);
         try
         {
+            var all = await downloads.AllAsync(cancellationToken);
             if (release.InfoHash is { } hash)
-                foreach (var existing in await downloads.AllAsync(cancellationToken))
+                foreach (var existing in all)
                     if (existing.InfoHash == hash && MediaDownloadStates.IsActive(existing.State)) return existing;
+            // The same album already on its way (another copy of it, from + Add or another list):
+            // that one, not a second.
+            if (ActiveAlbum(all, album.Artist, album.Album) is { } underway) return underway;
 
             var id = Guid.NewGuid();
             var download = new MediaDownload
@@ -473,6 +487,28 @@ public sealed class MediaDownloadManager(
             return download;
         }
         finally { _queueLock.Release(); }
+    }
+
+    // An album download of this artist and album that is still going.
+    private static MediaDownload? ActiveAlbum(IEnumerable<MediaDownload> all, string? artist, string album)
+    {
+        var artistKey = MusicText.Key(artist);
+        var albumKey = MusicText.EditionlessKey(album);
+        return all.FirstOrDefault(d => d.Kind == MediaDownloadKinds.Album && MediaDownloadStates.IsActive(d.State)
+            && MusicText.Key(d.Artist) == artistKey && MusicText.EditionlessKey(d.Title) == albumKey);
+    }
+
+    // For "Import a list": an album download of this one that is still going, or that finished
+    // recently enough that the library scan may not have caught up with it yet.
+    public async Task<MediaDownload?> AlbumDownloadAsync(string? artist, string album, CancellationToken cancellationToken)
+    {
+        var all = await downloads.AllAsync(cancellationToken);
+        if (ActiveAlbum(all, artist, album) is { } active) return active;
+        var artistKey = MusicText.Key(artist);
+        var albumKey = MusicText.EditionlessKey(album);
+        return all.FirstOrDefault(d => d.Kind == MediaDownloadKinds.Album && d.State == MediaDownloadStates.Done
+            && DateTimeOffset.UtcNow - (d.FinishedAt ?? d.CreatedAt) < RecentlyFinished
+            && MusicText.Key(d.Artist) == artistKey && MusicText.EditionlessKey(d.Title) == albumKey);
     }
 
     public async Task<AudioLibraryInfo?> FirstMusicLibraryAsync(CancellationToken cancellationToken)
@@ -541,9 +577,21 @@ public sealed class MediaDownloadManager(
         await _queueLock.WaitAsync(cancellationToken);
         try
         {
+            var all = await downloads.AllAsync(cancellationToken);
             if (release.InfoHash is { } hash)
-                foreach (var existing in await downloads.AllAsync(cancellationToken))
+                foreach (var existing in all)
                     if (existing.InfoHash == hash && MediaDownloadStates.IsActive(existing.State)) return existing;
+            // The same film or episode already on its way under another copy: that one, not a
+            // second. (A replace is its own request and goes ahead.)
+            var season = kind == MediaKinds.Episode ? search.Input.Season ?? release.Season : null;
+            var episode = kind == MediaKinds.Episode ? (search.Input.Season is null ? release.Episode : search.Input.Episode) : null;
+            var titleKey = MediaNaming.NormalizeKey(search.Input.Title);
+            if (replaceItemId is null && all.FirstOrDefault(d => d.Kind == kind && MediaDownloadStates.IsActive(d.State)
+                    && MediaNaming.NormalizeKey(d.Title) == titleKey
+                    && (kind == MediaKinds.Movie
+                        ? d.Year is null || search.Input.Year is null || d.Year == search.Input.Year
+                        : d.Season == season && d.Episode == episode)) is { } underway)
+                return underway;
 
             var id = Guid.NewGuid();
             var download = new MediaDownload
@@ -554,8 +602,8 @@ public sealed class MediaDownloadManager(
                 Year = search.Input.Year,
                 TmdbId = search.Input.TmdbId,
                 // A season pack found by a whole-show search still says which season it is.
-                Season = kind == MediaKinds.Episode ? search.Input.Season ?? release.Season : null,
-                Episode = kind == MediaKinds.Episode ? (search.Input.Season is null ? release.Episode : search.Input.Episode) : null,
+                Season = season,
+                Episode = episode,
                 PosterPath = search.Input.PosterPath,
                 ReleaseTitle = release.Title,
                 Indexer = release.Indexer,
@@ -741,6 +789,13 @@ public sealed class MediaDownloadManager(
     private async Task AdvanceAsync(MediaDownload download, IReadOnlyList<QbittorrentClient.Torrent> torrents, MediaDownloadsSettingsDto options, CancellationToken cancellationToken)
     {
         var torrent = torrents.FirstOrDefault(t => HasTag(t, download));
+        if (download.State == MediaDownloadStates.Queued && download.FindingAnotherCopy)
+        {
+            // The last copy stalled; a search for the next one runs off the worker's pass (it
+            // takes a while). Started here too, so one cut short by a restart starts again.
+            if (_findingCopy.TryAdd(download.Id, 0)) _ = Task.Run(() => FindAnotherCopyAsync(download.Id));
+            return;
+        }
         if (download.State == MediaDownloadStates.Queued)
         {
             if (torrent is null)
@@ -752,6 +807,8 @@ public sealed class MediaDownloadManager(
             }
             download.State = MediaDownloadStates.Downloading;
             download.Error = null;
+            download.LastProgressAt = DateTimeOffset.UtcNow;
+            Remember(download);
             await downloads.SaveAsync(download, cancellationToken);
             return;
         }
@@ -766,6 +823,9 @@ public sealed class MediaDownloadManager(
             throw new MediaDownloadException(torrent.State == "missingFiles" ? "qBittorrent lost the downloaded files." : "qBittorrent reported an error with this torrent. Try another release.");
 
         download.InfoHash ??= torrent.Hash;
+        // Any new bytes count as progress; downloads from before this field existed start their
+        // clock now rather than being judged stalled on the spot.
+        if (torrent.Downloaded > download.DownloadedBytes || download.LastProgressAt is null) download.LastProgressAt = DateTimeOffset.UtcNow;
         download.Progress = Math.Clamp(torrent.Progress, 0, 1);
         download.DownloadedBytes = torrent.Downloaded;
         download.SizeBytes = torrent.Size > 0 ? torrent.Size : download.SizeBytes;
@@ -776,6 +836,12 @@ public sealed class MediaDownloadManager(
 
         if (download.Progress < 1)
         {
+            if (options.StallMinutes > 0 && download.State == MediaDownloadStates.Downloading
+                && DateTimeOffset.UtcNow - download.LastProgressAt > TimeSpan.FromMinutes(options.StallMinutes))
+            {
+                await GiveUpOnCopyAsync(download, torrent, options, cancellationToken);
+                return;
+            }
             await downloads.SaveAsync(download, cancellationToken);
             return;
         }
@@ -796,6 +862,125 @@ public sealed class MediaDownloadManager(
         await downloads.SaveAsync(download, cancellationToken);
         await ImportAsync(download, torrent, cancellationToken);
     }
+
+    // MARK: - Stalled downloads
+
+    // Nothing arrived for StallMinutes: usually nobody is sharing that copy any more (a site's
+    // seeder count can be months stale). Drop it and look for the next-best copy that people are
+    // sharing, up to MaxCopies in all, rather than wait for ever. Imported lists follow along,
+    // since their item points at this same download.
+    private async Task GiveUpOnCopyAsync(MediaDownload download, QbittorrentClient.Torrent torrent, MediaDownloadsSettingsDto options, CancellationToken cancellationToken)
+    {
+        try { await qbittorrent.DeleteAsync(torrent.Hash, deleteFiles: true, cancellationToken); }
+        catch (QbittorrentException ex) { logger.LogWarning("Movie downloads: could not remove stalled {Title} from qBittorrent: {Message}", download.Title, ex.Message); }
+        DeleteStaging(download);
+        Remember(download);
+        var waited = $"Nobody shared {download.ReleaseTitle} for {options.StallMinutes} minutes";
+        var tried = TriedCopies(download);
+        logger.LogInformation("Movie downloads: {Release} stalled for {Minutes} min (copy {Tried} of {Max})", download.ReleaseTitle, options.StallMinutes, tried, MaxCopies);
+        if (tried >= MaxCopies)
+            throw new MediaDownloadException($"{waited}, and {tried} copies were tried. Nobody seems to be sharing it right now - try again later.");
+
+        download.State = MediaDownloadStates.Queued;
+        download.FindingAnotherCopy = true;
+        download.Progress = 0;
+        download.DownloadedBytes = 0;
+        download.SpeedBytesPerSecond = 0;
+        download.EtaSeconds = null;
+        download.Peers = 0;
+        download.InfoHash = null;
+        download.Error = $"{waited} - looking for another copy...";
+        await downloads.SaveAsync(download, cancellationToken);
+        Wake();
+    }
+
+    private async Task FindAnotherCopyAsync(Guid id)
+    {
+        try
+        {
+            if (await downloads.GetAsync(id, CancellationToken.None) is not { FindingAnotherCopy: true } download) return;
+            var tried = new HashSet<string>(download.TriedReleases, StringComparer.OrdinalIgnoreCase);
+            bool Fresh(string title, string? hash) => !tried.Contains("title:" + title) && (hash is null || !tried.Contains(hash));
+
+            string? error = null;
+            (string Source, string Title, string? Indexer, long? Size, string? Hash)? next = null;
+            try
+            {
+                await EnsureReadyAsync(CancellationToken.None, fromWorker: true);
+                if (download.Kind == MediaDownloadKinds.Album)
+                {
+                    var found = await SearchAlbumReleasesAsync(new MusicDownloadSearchInput { Artist = download.Artist ?? "", Album = download.Title, Year = download.Year }, CancellationToken.None);
+                    var best = found.FirstOrDefault(r => r.Matches && r.Seeders is > 0 && !MusicReleaseRanker.Parse(r.Title).Discography && Fresh(r.Title, r.InfoHash));
+                    if (best is not null) next = (best.DownloadSource, best.Title, best.Indexer, best.SizeBytes, best.InfoHash);
+                }
+                else
+                {
+                    var found = await SearchReleasesAsync(new MediaDownloadSearchInput
+                    {
+                        Kind = download.Kind == MediaKinds.Episode ? MediaKinds.Show : MediaKinds.Movie,
+                        Title = download.Title,
+                        Year = download.Year,
+                        TmdbId = download.TmdbId,
+                        PosterPath = download.PosterPath,
+                        Season = download.Season,
+                        Episode = download.Episode
+                    }, CancellationToken.None);
+                    var best = found.FirstOrDefault(r => r.Matches && r.Seeders is > 0 && Fresh(r.Title, r.InfoHash));
+                    if (best is not null) next = (best.DownloadSource, best.Title, best.Indexer, best.SizeBytes, best.InfoHash);
+                }
+            }
+            catch (Exception ex) when (ex is MediaDownloadException or ProwlarrException or QbittorrentException or InvalidOperationException or HttpRequestException)
+            {
+                error = ex.Message;
+            }
+
+            await _queueLock.WaitAsync(CancellationToken.None);
+            try
+            {
+                // Canceled while it looked? Then leave it be.
+                if (await downloads.GetAsync(id, CancellationToken.None) is not { FindingAnotherCopy: true, State: MediaDownloadStates.Queued } current) return;
+                current.FindingAnotherCopy = false;
+                if (next is { } copy)
+                {
+                    current.Source = copy.Source;
+                    current.ReleaseTitle = copy.Title;
+                    current.Indexer = copy.Indexer;
+                    current.SizeBytes = copy.Size;
+                    current.InfoHash = copy.Hash?.ToLowerInvariant();
+                    current.LastProgressAt = null;
+                    current.Error = $"Trying another copy ({TriedCopies(current) + 1} of {MaxCopies}).";
+                    logger.LogInformation("Movie downloads: trying {Release} for {Title} after a stall", copy.Title, current.Title);
+                }
+                else
+                {
+                    current.State = MediaDownloadStates.Failed;
+                    current.FinishedAt = DateTimeOffset.UtcNow;
+                    current.Error = error is null
+                        ? "Nobody was sharing the copy it picked, and no other copy has people sharing it right now. Try again later."
+                        : $"Nobody was sharing the copy it picked, and looking for another failed: {error}";
+                }
+                await downloads.SaveAsync(current, CancellationToken.None);
+                Touch();
+                Wake();
+            }
+            finally { _queueLock.Release(); }
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Movie downloads: looking for another copy of {Id} failed", id); }
+        finally { _findingCopy.TryRemove(id, out _); }
+    }
+
+    // Notes the copy now in hand as tried.
+    private static void Remember(MediaDownload download)
+    {
+        void Add(string key)
+        {
+            if (!download.TriedReleases.Contains(key, StringComparer.OrdinalIgnoreCase)) download.TriedReleases.Add(key);
+        }
+        if (download.ReleaseTitle.Length > 0) Add("title:" + download.ReleaseTitle);
+        if (download.InfoHash is { Length: > 0 } hash) Add(hash.ToLowerInvariant());
+    }
+
+    private static int TriedCopies(MediaDownload download) => download.TriedReleases.Count(t => t.StartsWith("title:", StringComparison.Ordinal));
 
     private async Task ImportAsync(MediaDownload download, QbittorrentClient.Torrent torrent, CancellationToken cancellationToken)
     {
@@ -889,6 +1074,14 @@ public sealed class MediaDownloadDuplicateException(MediaItem existing, bool can
 {
     public MediaItem Existing { get; } = existing;
     public bool CanReplace { get; } = canReplace;
+}
+
+// The album is already in the library and the app has not said to download it again.
+public sealed class MediaDownloadAlbumDuplicateException(string artist, string album)
+    : Exception($"You already have {album}{(artist.Length > 0 ? $" by {artist}" : "")}.")
+{
+    public string Artist { get; } = artist;
+    public string Album { get; } = album;
 }
 
 public sealed class MediaDownloadWorker(MediaDownloadManager manager, ILogger<MediaDownloadWorker> logger) : BackgroundService

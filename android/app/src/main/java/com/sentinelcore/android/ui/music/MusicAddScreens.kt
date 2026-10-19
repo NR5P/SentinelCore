@@ -169,6 +169,8 @@ private fun ReleaseSearch(album: MusicLookup, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var showOthers by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<MusicRelease?>(null) }
+    // "You already have Rumours by Fleetwood Mac." - the release waiting on "Download again".
+    var alreadyHave by remember { mutableStateOf<Pair<MusicRelease, String>?>(null) }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(album, attempt) {
         error = null
@@ -238,7 +240,13 @@ private fun ReleaseSearch(album: MusicLookup, onBack: () -> Unit) {
                 TextButton(onClick = {
                     confirm = null
                     ui.launch("Couldn't start the download.") {
-                        ui.api.grabMusic(searchId, release.id)
+                        try {
+                            ui.api.grabMusic(searchId, release.id)
+                        } catch (e: com.sentinelcore.android.audio.AudioApiException) {
+                            if (e.status != 409) throw e
+                            alreadyHave = release to (e.message ?: "You already have ${album.title}.")
+                            return@launch
+                        }
                         ui.message("Downloading ${album.title}. It shows up under Recently added when it's done.")
                         ui.nav.back()
                         ui.nav.open(AudioRoutes.ALBUM_DOWNLOADS)
@@ -246,6 +254,26 @@ private fun ReleaseSearch(album: MusicLookup, onBack: () -> Unit) {
                 }) { Text("Download") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
+        )
+    }
+    val again = alreadyHave
+    if (again != null && searchId != null) {
+        AlertDialog(
+            onDismissRequest = { alreadyHave = null },
+            title = { Text(again.second) },
+            text = { Text("It's already in your library, maybe as another edition. Download it again anyway?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    alreadyHave = null
+                    ui.launch("Couldn't start the download.") {
+                        ui.api.grabMusic(searchId, again.first.id, downloadAgain = true)
+                        ui.message("Downloading ${album.title}. It shows up under Recently added when it's done.")
+                        ui.nav.back()
+                        ui.nav.open(AudioRoutes.ALBUM_DOWNLOADS)
+                    }
+                }) { Text("Download again") }
+            },
+            dismissButton = { TextButton(onClick = { alreadyHave = null }) { Text("Cancel") } },
         )
     }
 }

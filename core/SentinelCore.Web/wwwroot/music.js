@@ -1480,14 +1480,22 @@ window.SentinelMusic = (function () {
         ${add.others ? `<div class="mv-rel-list mv-rel-others">${others.map((r, i) => releaseMarkup(r, i, "others")).join("")}</div>` : ""}` : ""}`;
   }
 
-  async function grab(button, releaseId) {
+  async function grab(button, releaseId, downloadAgain) {
     if (!add.search || !add.search.id) return;
     for (const b of document.querySelectorAll("#au-modal-panel [data-mact='mu-add-grab']")) b.disabled = true;
     button.classList.add("mv-working");
     const body = { searchId: add.search.id, releaseId };
+    if (downloadAgain) body.downloadAgain = true;
     const lib = el("mu-add-lib");
     if (lib && lib.value) body.libraryId = lib.value;
     const res = await request("/api/music/downloads", { method: "POST", body });
+    // Already in the library (any edition of it): ask before fetching it again.
+    if (res.status === 409 && res.data && res.data.code === "alreadyInLibrary" && !downloadAgain) {
+      if (confirm(`${res.error} Download it again anyway?`)) return grab(button, releaseId, true);
+      for (const b of document.querySelectorAll("#au-modal-panel [data-mact='mu-add-grab']")) b.disabled = false;
+      button.classList.remove("mv-working");
+      return;
+    }
     if (!res.ok) {
       for (const b of document.querySelectorAll("#au-modal-panel [data-mact='mu-add-grab']")) b.disabled = false;
       button.classList.remove("mv-working");

@@ -105,6 +105,16 @@ public static class MusicDownloadEndpoints
                 var download = await manager.GrabAlbumAsync(input, context.User.Identity?.Name ?? "", ct);
                 return Results.Created($"/api/music/downloads/{download.Id}", MediaDownloadEndpoints.DownloadDto(download));
             }
+            // The app asks "Download it again?" and sends the same request with downloadAgain true.
+            catch (MediaDownloadAlbumDuplicateException ex)
+            {
+                return Results.Json(new
+                {
+                    error = ex.Message,
+                    code = "alreadyInLibrary",
+                    existing = new { title = ex.Album, artist = ex.Artist }
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
             catch (MediaDownloadException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 

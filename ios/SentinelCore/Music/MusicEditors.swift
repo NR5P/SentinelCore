@@ -387,6 +387,8 @@ private struct MusicReleasePickerView: View {
     @State private var errorMessage: String?
     @State private var showingOthers = false
     @State private var grabbing: String?
+    // "You already have Rumours by Fleetwood Mac." - the release waiting on "Download Again".
+    @State private var alreadyHave: (release: MusicRelease, message: String)?
 
     var body: some View {
         List {
@@ -428,6 +430,15 @@ private struct MusicReleasePickerView: View {
         }
         .navigationTitle("Choose a Release")
         .task { await run() }
+        .confirmationDialog(alreadyHave?.message ?? "", isPresented: Binding(get: { alreadyHave != nil }, set: { if !$0 { alreadyHave = nil } }),
+                            titleVisibility: .visible) {
+            Button("Download Again") {
+                if let release = alreadyHave?.release { Task { await grab(release, downloadAgain: true) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It's already in your library, maybe as another edition.")
+        }
     }
 
     private func releaseRow(_ release: MusicRelease) -> some View {
@@ -475,14 +486,16 @@ private struct MusicReleasePickerView: View {
         }
     }
 
-    private func grab(_ release: MusicRelease) async {
+    private func grab(_ release: MusicRelease, downloadAgain: Bool = false) async {
         guard let search else { return }
         grabbing = release.id
         defer { grabbing = nil }
         do {
-            _ = try await AppModel.shared.client.startMusicDownload(searchId: search.id, releaseId: release.id, libraryId: nil)
+            _ = try await AppModel.shared.client.startMusicDownload(searchId: search.id, releaseId: release.id, libraryId: nil, downloadAgain: downloadAgain)
             AudioToast.shared.show("Downloading \(album.title)")
             onGrabbed()
+        } catch ClientError.server(409, let message) where !downloadAgain {
+            alreadyHave = (release, message ?? "You already have \(album.title).")
         } catch {
             errorMessage = error.localizedDescription
         }

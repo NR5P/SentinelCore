@@ -43,6 +43,15 @@ What is downloaded is the household's responsibility; the server ships with no s
   - `TV Shows/Bluey (2018)/Season 2/Bluey - S02E05.mkv` - into the show's existing folder when
     the library already has the show.
 - Only libraries on the server's own disks can receive downloads (not `smb://` ones).
+- **Stuck downloads move on.** A download that gets no new bytes for `stallMinutes` (default 30;
+  0 waits for ever) is removed from qBittorrent with its files, and the server searches again for
+  the next-best copy that matches with people sharing it - never one already tried - and starts
+  that instead. After `MediaDownloadManager.MaxCopies` (3) copies it fails, saying so. While it
+  looks, the download is `queued` with `error` "Nobody shared … for 30 minutes - looking for
+  another copy..."; once found, "Trying another copy (2 of 3)." Imported lists follow along, since
+  their item points at the same download.
+- **Never the same thing twice.** A grab for a film, episode or album that is already downloading
+  (another copy of it, from "+ Add" or a list) returns that download instead of starting a second.
 
 The Music tab's "+ Add" for albums runs on this same stack, settings and sites
 (`MusicDownload*.cs`, contract in MUSIC_AND_PODCASTS.md).
@@ -82,7 +91,7 @@ off only if nothing here can check it.
   "wireGuardPrivateKey": "", "wireGuardAddress": "", "wireGuardDns": "",
   "wireGuardServerPublicKey": "", "wireGuardServerEndpoint": "",
   "allowedUsers": "admins|everyone", "preferredQuality": "1080p|2160p|720p|any",
-  "seedMinutes": 0, "idleMinutes": 5, "manageServices": true,
+  "seedMinutes": 0, "idleMinutes": 5, "stallMinutes": 30, "manageServices": true,
   "prowlarrUrl": "http://10.250.0.2:9696", "prowlarrApiKey": "",
   "qbittorrentUrl": "http://10.250.0.2:8080", "qbittorrentUsername": "", "qbittorrentPassword": "" }
 ```
@@ -350,14 +359,17 @@ Import = { "id", "kind": "music|movies", "name", "requestedBy", "createdAt", "pa
 ```
 
 How the server works through it (`MediaImportService`, one item at a time, oldest list first):
-skip it if it is in the library by now (`inLibrary`); run the same search as "+ Add"; take the
+skip it if it is in the library by now, under any edition's name, or was downloaded in the last
+two days (`inLibrary`); follow a download of it already under way instead of searching again
+(`queued`); otherwise run the same search as "+ Add"; take the
 first result that matches with people sharing it (never a discography for music); queue it like a
 person pressing download (`RequestedBy` = whoever imported the list; movies never replace a copy).
 No usable result → `notFound`. If the search itself fails (VPN or services down), the item goes
 back to `waiting`, the list's `message` says why, and it tries again after
 `MediaDownloads:ImportRetrySeconds` (300) — so a dead VPN never marks a whole list failed. Each
 list keeps at most `MediaDownloads:ImportActiveDownloads` (3) of its downloads going at once; one
-with nobody sharing it stops holding a slot after an hour. Lists live in the `MediaImports` table
+with nobody sharing it stops holding a slot after an hour (and moves on to another copy after
+`stallMinutes`, above). Lists live in the `MediaImports` table
 of `media-downloads.db` (history, not in backups).
 
 ### Sites (admin)

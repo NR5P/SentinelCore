@@ -36,7 +36,7 @@ private struct NoteBody: Encodable, Sendable { var note: String }
 private struct ClipBody: Encodable, Sendable { var startSeconds: Double; var durationSeconds: Double; var title: String }
 private struct TokenBody: Encodable, Sendable { var token: String }
 private struct DownloadSearchBody: Encodable, Sendable { var artist: String; var album: String; var year: Int?; var mbid: String?; var artUrl: String? }
-private struct GrabBody: Encodable, Sendable { var searchId: String; var releaseId: String; var libraryId: String? }
+private struct GrabBody: Encodable, Sendable { var searchId: String; var releaseId: String; var libraryId: String?; var downloadAgain: Bool? }
 struct BookmarkNoteResult: Decodable, Sendable { var noteId: String? }
 struct TranscribeResult: Decodable, Sendable { var state: String? }
 
@@ -309,9 +309,12 @@ extension SentinelClient {
     }
 
     // The server fetches the torrent through the VPN before it answers, so the long timeout.
-    func startMusicDownload(searchId: String, releaseId: String, libraryId: String?) async throws -> MediaDownload {
+    // An album already in the library answers 409 (ClientError.server) unless downloadAgain says
+    // to fetch it anyway.
+    func startMusicDownload(searchId: String, releaseId: String, libraryId: String?, downloadAgain: Bool = false) async throws -> MediaDownload {
         let data = try await audioData("POST", "/api/music/downloads",
-                                       body: try JSONEncoder().encode(GrabBody(searchId: searchId, releaseId: releaseId, libraryId: libraryId)),
+                                       body: try JSONEncoder().encode(GrabBody(searchId: searchId, releaseId: releaseId, libraryId: libraryId,
+                                                                               downloadAgain: downloadAgain ? true : nil)),
                                        timeout: 90)
         return try JSONDecoder.sentinel.decode(MediaDownload.self, from: data)
     }

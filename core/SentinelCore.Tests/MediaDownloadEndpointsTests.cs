@@ -1300,6 +1300,178 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/music/downloads/imports/{job.GetProperty("id").GetString()}", Ct)).StatusCode);
     }
 
+    // MARK: - Stalled downloads and duplicates
+
+    private static async Task<JsonElement> AlbumSearchAsync(HttpClient client, string artist, string album)
+    {
+        var started = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/search", new { artist, album }, Ct), HttpStatusCode.Accepted);
+        for (var i = 0; i < 100; i++)
+        {
+            var search = await JsonAsync(await client.GetAsync($"/api/music/downloads/search/{started.GetProperty("id").GetString()}", Ct), HttpStatusCode.OK);
+            if (search.GetProperty("phase").GetString() is "done" or "failed") return search;
+            await Task.Delay(50, Ct);
+        }
+        throw new TimeoutException("search never finished");
+    }
+
+    private static Task<HttpResponseMessage> GrabAlbumAsync(HttpClient client, JsonElement search, int result = 0, bool? downloadAgain = null) =>
+        client.PostAsJsonAsync("/api/music/downloads", new
+        {
+            searchId = search.GetProperty("id").GetString(),
+            releaseId = search.GetProperty("results")[result].GetProperty("id").GetString(),
+            downloadAgain
+        }, Ct);
+
+    // Nothing for StallMinutes: as if the clock had moved on.
+    private static async Task BackdateProgressAsync(WebApplicationFactory<WebProgram> factory, Guid id)
+    {
+        var store = factory.Services.GetRequiredService<MediaDownloadStore>();
+        var download = (await store.GetAsync(id, Ct))!;
+        download.LastProgressAt = DateTimeOffset.UtcNow.AddMinutes(-31);
+        await store.SaveAsync(download, Ct);
+    }
+
+    private static async Task<MediaDownload> WaitForAnotherCopyAsync(MediaDownloadManager manager, Guid id)
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var download = (await manager.GetAsync(id, Ct))!;
+            if (!download.FindingAnotherCopy) return download;
+            await Task.Delay(50, Ct);
+        }
+        throw new TimeoutException("never found another copy");
+    }
+
+    [Fact]
+    public async Task AStalledDownload_MovesOnToTheNextCopyPeopleShare_AndGivesUpAfterThree()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath)) { Lossless = 0.9 };
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases =
+        [
+            Release("Fleetwood Mac - Rumours (1977) [FLAC]", 40, "magnet:?xt=urn:btih:flac", "flac"),
+            Release("Fleetwood Mac - Rumours (1977) [MP3 320]", 300, "magnet:?xt=urn:btih:mp3", "mp3"),
+            Release("Fleetwood Mac - Rumours (1977) [MP3 V0]", 20, "magnet:?xt=urn:btih:v0", "v0"),
+            Release("Fleetwood Mac - Rumours (1977) [AAC]", 10, "magnet:?xt=urn:btih:aac", "aac"),
+        ];
+        var search = await AlbumSearchAsync(client, "Fleetwood Mac", "Rumours");
+        var id = Guid.Parse((await JsonAsync(await GrabAlbumAsync(client, search), HttpStatusCode.Created)).GetProperty("id").GetString()!);
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+
+        var copies = new List<string>();
+        for (var copy = 1; copy <= 3; copy++)
+        {
+            await manager.TickAsync(Ct);
+            var added = _qbittorrent.Added[^1];
+            copies.Add(added.Magnet!);
+            var hash = added.Magnet!.Split(':').Last();
+            // Nobody sharing: it never gets a byte.
+            _qbittorrent.Torrents.Add(new FakeTorrent(hash, added.Tag, 0, 1000, 0, 0, 8640000, "metaDL"));
+            await manager.TickAsync(Ct);
+            Assert.Equal(MediaDownloadStates.Downloading, (await manager.GetAsync(id, Ct))!.State);
+
+            await BackdateProgressAsync(factory, id);
+            await manager.TickAsync(Ct);
+            Assert.Contains((hash, true), _qbittorrent.Deleted);
+            var after = (await manager.GetAsync(id, Ct))!;
+            if (copy < 3)
+            {
+                Assert.Equal(MediaDownloadStates.Queued, after.State);
+                Assert.Contains("looking for another copy", after.Error);
+                await manager.TickAsync(Ct);
+                var next = await WaitForAnotherCopyAsync(manager, id);
+                Assert.Equal($"Trying another copy ({copy + 1} of 3).", next.Error);
+            }
+            else
+            {
+                Assert.Equal(MediaDownloadStates.Failed, after.State);
+                Assert.Contains("3 copies were tried", after.Error);
+            }
+        }
+        // The pick first, then the best of the rest each time - never the same copy twice.
+        Assert.Equal(["magnet:?xt=urn:btih:flac", "magnet:?xt=urn:btih:mp3", "magnet:?xt=urn:btih:v0"], copies);
+    }
+
+    [Fact]
+    public async Task ADownloadStillGettingBytes_IsNeverGivenUpOn_AndZeroMinutesWaitsForEver()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath));
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases = [Release("Fleetwood Mac - Tusk (1979) [FLAC]", 40, "magnet:?xt=urn:btih:tusk", "tusk")];
+        var search = await AlbumSearchAsync(client, "Fleetwood Mac", "Tusk");
+        var id = Guid.Parse((await JsonAsync(await GrabAlbumAsync(client, search), HttpStatusCode.Created)).GetProperty("id").GetString()!);
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+        await manager.TickAsync(Ct);
+        _qbittorrent.Torrents.Add(new FakeTorrent("tusk", _qbittorrent.Added[0].Tag, 0.1, 1000, 100, 10, 90, "downloading"));
+        await manager.TickAsync(Ct);
+
+        // Slow but moving: a new byte since the last pass resets the clock.
+        await BackdateProgressAsync(factory, id);
+        _qbittorrent.Torrents[0] = _qbittorrent.Torrents[0] with { Downloaded = 150, Progress = 0.15 };
+        await manager.TickAsync(Ct);
+        Assert.Equal(MediaDownloadStates.Downloading, (await manager.GetAsync(id, Ct))!.State);
+
+        // Stuck, but the setting says wait for ever.
+        File.WriteAllText(_settingsPath, File.ReadAllText(_settingsPath).Replace("\"IdleMinutes\": 1", "\"IdleMinutes\": 1, \"StallMinutes\": 0"));
+        await BackdateProgressAsync(factory, id);
+        await manager.TickAsync(Ct);
+        Assert.Equal(MediaDownloadStates.Downloading, (await manager.GetAsync(id, Ct))!.State);
+        Assert.Empty(_qbittorrent.Deleted);
+    }
+
+    [Fact]
+    public async Task AnAlbumYouHave_AsksFirst_AndTheSameAlbumUnderwayIsNeverQueuedTwice()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath));
+        _music.Owned.Add("Fleetwood Mac|Rumours");
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases =
+        [
+            Release("Fleetwood Mac - Tusk (1979) [FLAC]", 40, "magnet:?xt=urn:btih:tusk", "tusk"),
+            Release("Fleetwood Mac - Tusk (1979) [MP3 320]", 30, "magnet:?xt=urn:btih:tuskmp3", "tuskmp3"),
+            Release("Fleetwood Mac - Rumours (1977) [FLAC]", 40, "magnet:?xt=urn:btih:flac", "flac"),
+        ];
+
+        // Had already: the app is asked, and only "download it again" goes ahead.
+        var rumours = await AlbumSearchAsync(client, "Fleetwood Mac", "Rumours");
+        var asked = await JsonAsync(await GrabAlbumAsync(client, rumours), HttpStatusCode.Conflict);
+        Assert.Equal("alreadyInLibrary", asked.GetProperty("code").GetString());
+        Assert.Equal("You already have Rumours by Fleetwood Mac.", asked.GetProperty("error").GetString());
+        Assert.Equal("Rumours", asked.GetProperty("existing").GetProperty("title").GetString());
+        await JsonAsync(await GrabAlbumAsync(client, rumours, downloadAgain: true), HttpStatusCode.Created);
+
+        // Underway already, under another copy: the same download comes back, not a second.
+        var tusk = await AlbumSearchAsync(client, "Fleetwood Mac", "Tusk");
+        var first = await JsonAsync(await GrabAlbumAsync(client, tusk, 0), HttpStatusCode.Created);
+        var again = await JsonAsync(await GrabAlbumAsync(client, tusk, 1), HttpStatusCode.Created);
+        Assert.Equal(first.GetProperty("id").GetString(), again.GetProperty("id").GetString());
+
+        // And a list with it follows that download without searching for it again.
+        var queries = _prowlarr.Queries.Count;
+        var job = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/imports", new
+        {
+            items = new[] { new { artist = "Fleetwood Mac", title = "Tusk (Deluxe Edition)" } }
+        }, Ct), HttpStatusCode.Created);
+        await StepUntilSettledAsync(factory);
+        var item = Assert.Single((await JsonAsync(await client.GetAsync($"/api/music/downloads/imports/{job.GetProperty("id").GetString()}", Ct), HttpStatusCode.OK))
+            .GetProperty("items").EnumerateArray());
+        Assert.Equal("queued", item.GetProperty("state").GetString());
+        Assert.Equal(queries, _prowlarr.Queries.Count);
+        Assert.Equal(2, (await JsonAsync(await client.GetAsync("/api/music/downloads", Ct), HttpStatusCode.OK)).GetProperty("active").GetArrayLength());
+    }
+
     private sealed class FakeMusic(AudioLibraryInfo library) : IMusicAudioSource
     {
         public AudioLibraryInfo Library { get; } = library;

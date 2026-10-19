@@ -504,6 +504,9 @@ public sealed class MusicGrabInput
     public string SearchId { get; init; } = "";
     public string ReleaseId { get; init; } = "";
     public string? LibraryId { get; init; }
+    /// <summary>An album already in the library answers 409 (code alreadyInLibrary) unless this
+    /// says to fetch it anyway.</summary>
+    public bool? DownloadAgain { get; init; }
 }
 
 // ---------------------------------------------------------------- Small bodies

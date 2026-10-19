@@ -245,9 +245,17 @@ class AudioApi(private val transport: AudioTransport) {
 
     suspend fun musicSearch(id: String): MusicReleaseSearch = parseMusicReleaseSearch(obj("GET", "/api/music/downloads/search/${seg(id)}"))
 
-    suspend fun grabMusic(searchId: String, releaseId: String, libraryId: String? = null): MediaDownload =
+    // An album already in the library answers 409 (AudioApiException) unless downloadAgain says
+    // to fetch it anyway.
+    suspend fun grabMusic(searchId: String, releaseId: String, libraryId: String? = null, downloadAgain: Boolean = false): MediaDownload =
         parseMediaDownload(
-            obj("POST", "/api/music/downloads", body = JSONObject().put("searchId", searchId).put("releaseId", releaseId).apply { libraryId?.let { put("libraryId", it) } }),
+            obj(
+                "POST", "/api/music/downloads",
+                body = JSONObject().put("searchId", searchId).put("releaseId", releaseId).apply {
+                    libraryId?.let { put("libraryId", it) }
+                    if (downloadAgain) put("downloadAgain", true)
+                },
+            ),
         )
 
     suspend fun musicDownloads(): MediaDownloadList = parseMediaDownloadList(obj("GET", "/api/music/downloads"))

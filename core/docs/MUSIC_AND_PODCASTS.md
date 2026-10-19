@@ -429,8 +429,14 @@ a search runs in the background, because starting the VPN can take a minute or t
   - `results` are the releases that match and have people sharing them, best first. Lossless
     comes first when most of the library already is, then the most seeders.
   - `others` holds the rest, worth showing behind a "Show more" link.
-- `POST /api/music/downloads` with body `{ "searchId", "releaseId", "libraryId"? }` → 201
+- `POST /api/music/downloads` with body `{ "searchId", "releaseId", "libraryId"?, "downloadAgain"? }` → 201
   Download (400 `{ error }` when the search expired).
+  - An album already in the library - same artist, and the same title once edition words are
+    left out ("Rumours (Deluxe Edition)" is "Rumours"; `MusicText.EditionlessKey`) - answers
+    **409** `{ "error": "You already have Rumours by Fleetwood Mac.", "code": "alreadyInLibrary",
+    "existing": { "title", "artist" } }`. The app asks "Download it again?" and sends the same body
+    with `"downloadAgain": true`.
+  - The same album already downloading (any copy) answers 201 with that download.
   - `libraryId` defaults to the first music library on the server's own disk.
   - Download has the same shape as Movies' Download, with `kind: "album"`, plus `artist`.
     `title` is the album, `subtitle` the artist, and `posterUrl` is the `artUrl` sent with the

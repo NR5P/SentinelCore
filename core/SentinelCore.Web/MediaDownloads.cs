@@ -55,6 +55,14 @@ public sealed class MediaDownload
     public long? EtaSeconds { get; set; }
     public int Peers { get; set; }
     public string? Error { get; set; }
+    // When it last got any bytes (or was handed to qBittorrent). A download that gets nothing
+    // for StallMinutes is given up on and another copy is looked for - see MediaDownloadManager.
+    public DateTimeOffset? LastProgressAt { get; set; }
+    // The copies already tried for this download (info hashes and release titles), so the
+    // look for another copy never picks one of them again.
+    public List<string> TriedReleases { get; set; } = [];
+    // Queued, waiting for the server to find another copy after the last one stalled.
+    public bool FindingAnotherCopy { get; set; }
 
     public Guid LibraryId { get; set; }
     // Where qBittorrent writes (a hidden folder inside the library, so the move is a rename).
@@ -130,6 +138,10 @@ public sealed class MediaDownloadsSettingsDto
     public int SeedMinutes { get; set; }
     [Range(1, 240)]
     public int IdleMinutes { get; set; } = 5;
+    // A download that gets nothing for this long is stopped and another copy looked for (up to
+    // MediaDownloadManager.MaxCopies). 0 waits for ever.
+    [Range(0, 1440)]
+    public int StallMinutes { get; set; } = 30;
 }
 
 public sealed class MediaDownloadSearchInput

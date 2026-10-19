@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using SentinelCore.Client;
 using SentinelCore.Client.Models;
+using SentinelCore.Client.Networking;
 
 namespace SentinelCore.App.Views.Audio;
 
@@ -199,12 +200,19 @@ public sealed class MusicAddWindow : AudioDialog
         return grid;
     }
 
-    private async Task GrabAsync(string searchId, MusicRelease release)
+    private async Task GrabAsync(string searchId, MusicRelease release, bool downloadAgain = false)
     {
         try
         {
-            await Model.Client.MusicDownloadGrabAsync(new MusicGrabInput { SearchId = searchId, ReleaseId = release.Id });
+            await Model.Client.MusicDownloadGrabAsync(new MusicGrabInput { SearchId = searchId, ReleaseId = release.Id, DownloadAgain = downloadAgain ? true : null });
             Done();
+        }
+        // Already in the library, maybe as another edition: ask before fetching it again.
+        catch (SentinelServerException error) when (error.Status == 409 && error.Code == "alreadyInLibrary" && !downloadAgain)
+        {
+            var answer = MessageBox.Show(this, error.Message + "\n\nDownload it again anyway?", "Already in your library",
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer == MessageBoxResult.Yes) await GrabAsync(searchId, release, downloadAgain: true);
         }
         catch (Exception error)
         {

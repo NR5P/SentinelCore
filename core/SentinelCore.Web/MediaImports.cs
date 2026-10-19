@@ -93,7 +93,8 @@ public sealed class MediaImportService(
     private TimeSpan SearchTimeout => TimeSpan.FromSeconds(configuration.GetValue("MediaDownloads:ImportSearchTimeoutSeconds", 600));
     // After the services fail to start, how long until the next try.
     private TimeSpan RetryAfterTrouble => TimeSpan.FromSeconds(configuration.GetValue("MediaDownloads:ImportRetrySeconds", 300));
-    // A download with nobody sharing it stops holding one of the list's slots after this.
+    // A download with nobody sharing it stops holding one of the list's slots after this. (The
+    // download itself moves on to another copy after MediaDownloads:StallMinutes.)
     private static readonly TimeSpan StuckAfter = TimeSpan.FromHours(1);
 
     public void Wake() => _wake.Release();
@@ -262,6 +263,21 @@ public sealed class MediaImportService(
         // Still wanted? It may have arrived some other way since the list was made.
         if (await UpdateAsync(jobId, Find, cancellationToken) is null || item is null) return TimeSpan.Zero;
         var isMusic = job!.Kind == MediaImportList.KindMusic;
+        // Already on its way (+ Add, or another list) or only just finished: follow that one.
+        if (isMusic && await manager.AlbumDownloadAsync(item.Artist, item.Title, cancellationToken) is { } underway)
+        {
+            if (underway.State == MediaDownloadStates.Done)
+                await SetAsync(jobId, itemId, i => { i.State = MediaImportStates.InLibrary; i.Message = null; }, cancellationToken);
+            else
+                await SetAsync(jobId, itemId, i =>
+                {
+                    i.State = MediaImportStates.Queued;
+                    i.DownloadId = underway.Id;
+                    i.ReleaseTitle = underway.ReleaseTitle;
+                    i.Message = null;
+                }, cancellationToken);
+            return TimeSpan.Zero;
+        }
         var have = isMusic
             ? music is not null && await music.HasAlbumAsync(item.Artist ?? "", item.Title, cancellationToken)
             : await manager.HasMovieAsync(item.Title, item.Year, cancellationToken);
@@ -331,7 +347,7 @@ public sealed class MediaImportService(
             if (await GetAsync(jobId, cancellationToken) is not { } current || current.Items.FirstOrDefault(i => i.Id == itemId)?.State != MediaImportStates.Searching)
                 return TimeSpan.Zero;
             var download = isMusic
-                ? await manager.GrabAlbumAsync(new MusicDownloadGrabInput { SearchId = search.Id, ReleaseId = releaseId, LibraryId = job.LibraryId }, job.RequestedBy, cancellationToken)
+                ? await manager.GrabAlbumAsync(new MusicDownloadGrabInput { SearchId = search.Id, ReleaseId = releaseId, LibraryId = job.LibraryId, DownloadAgain = true }, job.RequestedBy, cancellationToken)
                 : await manager.GrabAsync(new MediaDownloadGrabInput { SearchId = search.Id, ReleaseId = releaseId, LibraryId = job.LibraryId, Replace = false },
                     job.RequestedBy, cancellationToken, mayReplace: false);
             await SetAsync(jobId, itemId, i =>

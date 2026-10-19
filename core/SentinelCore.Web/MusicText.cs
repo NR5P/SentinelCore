@@ -212,8 +212,30 @@ public static partial class MusicText
         return genres;
     }
 
+    // The album without its edition: "Rumours (Deluxe Edition)", "Rumours [2004 Remaster]" and
+    // "Rumours - Remastered" are all "rumours", so a list or a download never fetches an album
+    // again because the copy here came out under another edition's name. Only brackets and dash
+    // tails made of edition words go: "Greatest Hits Vol. 2" and "Live at Leeds" stay themselves.
+    public static string EditionlessKey(string? title)
+    {
+        var key = Key(title);
+        if (key.Length == 0) return key;
+        string before;
+        do
+        {
+            before = key;
+            key = EditionTail().Replace(key, "").Trim();
+        }
+        while (key != before && key.Length > 0);
+        return key.Length == 0 ? Key(title) : key;
+    }
+
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
+
+    // A trailing "(...)" / "[...]" / " - ..." whose every word is an edition word or a year.
+    [GeneratedRegex(@"\s*(?:[\(\[]\s*(?:(?:deluxe|edition|remaster|remastered|remasters|expanded|anniversary|explicit|clean|bonus|tracks?|special|collectors?|collector's|version|reissue|mono|stereo|club|limited|super|legacy|definitive|complete|ultimate|platinum|international|japan|japanese|uk|us|eu|single|ep|lp|album|digital|hd|hi-res|24-bit|24bit|edit|re-release|anniversary|th|st|nd|rd|\d{1,4}(?:th|st|nd|rd)?|-|&|and|the|of|cd|disc|\d)\s*)+[\)\]]|\s+-\s+(?:(?:deluxe|edition|remaster|remastered|expanded|anniversary|explicit|special|version|reissue|mono|stereo|single|ep|\d{4})\s*)+)$")]
+    private static partial Regex EditionTail();
 
     [GeneratedRegex(@"[^\p{L}\p{Nd}]+")]
     private static partial Regex NonWord();
