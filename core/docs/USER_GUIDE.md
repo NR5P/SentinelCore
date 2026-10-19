@@ -658,6 +658,14 @@ the pane. When a download finishes it is moved into the library — `Movies/Dune
 the show's own folder and season — with an English subtitle when there is one, and the library is
 rescanned.
 
+**A download that is stuck.** *Looking for people sharing it...* means nobody is sharing that copy
+right now — a site's count can be months out of date. After 30 minutes with nothing arriving
+(**Give Up On A Stuck Download After** in Settings → Movie Downloads; 0 waits for ever) the server
+drops it and tries the next-best copy people are sharing, up to three, saying *Trying another copy
+(2 of 3)*. If none of them work it stops and says so; **retry** later. A film, show or album that
+is already downloading is never started twice, whether it came from **+ add**, an imported list or
+a suggestion.
+
 **The VPN light.** Next to **+ add**, and on the downloads pane, a light says whether downloads
 are hiding your home address:
 
@@ -730,7 +738,9 @@ and albums) and **shuffle all**.
 a music library on the server's own disks, the MUSIC tab has **+ add** too: search for an album (artist and
 album, e.g. *fleetwood mac rumours*), pick a release, and it downloads through the same VPN and sites as movies and
 lands under *Recently added*. There's no separate setting; it follows **Settings → MOVIE
-DOWNLOADS** (including **Who Can Add**).
+DOWNLOADS** (including **Who Can Add**). An album you already have — under any edition's name, so
+*Rumours (Deluxe Edition)* counts as *Rumours* — asks **Download it again?** first, and imported
+lists skip it.
 
 ### The player (Music and Podcasts)
 
