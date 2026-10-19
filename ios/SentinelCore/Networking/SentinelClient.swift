@@ -34,10 +34,21 @@ final class SentinelClient {
     }
 
     func resetSession() {
-        session.invalidateAndCancel()
+        let retired = [session, organizerSession]
         session = Self.makeSession()
-        organizerSession.invalidateAndCancel()
         organizerSession = Self.makeOrganizerSession()
+        // Cancel what's in flight now, but invalidate later. URLSession.data(for:) leaves the
+        // main actor before it creates its task, so a poll that picked up the old session just
+        // before this ran creates its task a moment afterwards - and creating a task in an
+        // invalidated session raises an Objective-C exception, which kills the app instead of
+        // throwing (seen: the weather-warnings poll during an offline reconnect).
+        for old in retired {
+            old.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(30))
+            for old in retired { old.invalidateAndCancel() }
+        }
         model.log("Created a fresh network session")
     }
 
