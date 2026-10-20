@@ -10,9 +10,7 @@
     <array>
         <string>group.com.sentinelcore.client</string>
     </array>
-    <!-- CarPlay. Simulator only until Apple grants these to the App ID: a device build with an
-         entitlement its provisioning profile lacks won't sign. Once granted, copy both keys into
-         SentinelCore-iOS.entitlements (docs/CARPLAY_ENTITLEMENT_REQUEST.md). -->
+    <!-- CarPlay, as on device (SentinelCore-iOS.entitlements). -->
     <key>com.apple.developer.carplay-audio</key>
     <true/>
     <key>com.apple.developer.carplay-driving-task</key>

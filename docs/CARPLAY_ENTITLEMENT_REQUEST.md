@@ -36,6 +36,9 @@ Submit **one request per category**:
 field, only checkboxes for the app type, so Apple reviews the app itself. The descriptions below are
 kept for a resubmission, or for any follow-up questions Apple asks by email.
 
+**Granted 2026-10-20:** both Audio and Driving Task. Both are ticked on the App ID and both keys are
+in `SentinelCore-iOS.entitlements`; the first build to carry them is build 31.
+
 Fields, with text to paste:
 
 - **App name:** Sentinel Core

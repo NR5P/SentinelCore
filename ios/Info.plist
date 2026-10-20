@@ -152,8 +152,8 @@
 			</array>
 		</dict>
 	</dict>
-	<!-- CarPlay's Home and Alerts tabs need the Driving Task entitlement. If Apple grants only
-	     Audio, set this to false so CarPlay shows Music and Podcasts only. -->
+	<!-- CarPlay's Home and Alerts tabs, which need the Driving Task entitlement (granted
+	     2026-10-20, alongside Audio). False would leave CarPlay with Music and Podcasts only. -->
 	<key>SentinelCarPlayControls</key>
 	<true/>
 </dict>

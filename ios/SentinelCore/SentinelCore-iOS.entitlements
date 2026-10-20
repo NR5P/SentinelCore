@@ -10,5 +10,11 @@
     <array>
         <string>group.com.sentinelcore.client</string>
     </array>
+    <!-- CarPlay, granted by Apple 2026-10-20: Audio (Music, Podcasts) and Driving Task (Home,
+         Alerts). See CarPlay/CarPlaySceneDelegate.swift. -->
+    <key>com.apple.developer.carplay-audio</key>
+    <true/>
+    <key>com.apple.developer.carplay-driving-task</key>
+    <true/>
 </dict>
 </plist>
