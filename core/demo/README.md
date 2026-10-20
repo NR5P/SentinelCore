@@ -30,7 +30,9 @@ a specific hole found reading the code (2026-10-20):
 
 - **Its own user and folder.** `scdemo`, no shell, no sudo. Everything lives in `/srv/scdemo`. The
   units add `ProtectHome=yes` (the real install, its keys and settings are under `/home/media`),
-  `ProtectSystem=strict` with only `/srv/scdemo` writable, and `NoNewPrivileges`.
+  `ProtectSystem=strict` with only `/srv/scdemo` writable, `NoNewPrivileges`, and
+  `ProtectProc=invisible`: the real install's ffmpeg command lines carry camera passwords, and
+  without it any user on the box can read them from `/proc`.
 - **Its own copy of the binaries** (`app/`), without the real `appsettings.json` (the live file
   holds credentials, and several senders use credentials even when their channel is switched off),
   the bin `data/` folder or other platforms' native libraries.

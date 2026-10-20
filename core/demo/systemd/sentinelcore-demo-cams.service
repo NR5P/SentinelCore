@@ -15,6 +15,9 @@ Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
 # The walls: no view of /home (the real install, its keys and settings), nothing writable but
 # the demo folder, no privilege gain, so no sudo, systemctl or polkit tricks either.
 NoNewPrivileges=yes
+# Other users' processes are invisible: the real install's ffmpeg command lines carry camera
+# passwords, and /proc would otherwise show them to any user on the box.
+ProtectProc=invisible
 ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=@ROOT@
