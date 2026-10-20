@@ -162,7 +162,7 @@ fi
 if [[ "${SKIP_OLLAMA:-0}" == "1" ]]; then
   echo "Skipping Ollama (SKIP_OLLAMA=1) - pick a cloud vision provider in the setup wizard."
 elif ! command -v ollama >/dev/null 2>&1; then
-  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma3:4b'," >&2
+  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma4:e2b-it-qat'," >&2
   echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
 else
   # Ollama runs llama.cpp's llama-server, whose RAM prompt cache defaults to 8 GB. Camera images
@@ -177,9 +177,9 @@ else
     systemctl restart ollama
   fi
   for _ in $(seq 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
-  if ! ollama list 2>/dev/null | grep -q '^gemma3:4b'; then
-    echo "==> Downloading the gemma3:4b vision model (about 3.3 GB)"
-    ollama pull gemma3:4b || echo "WARNING: 'ollama pull gemma3:4b' failed - run it by hand before the first alert." >&2
+  if ! ollama list 2>/dev/null | grep -q '^gemma4:e2b-it-qat'; then
+    echo "==> Downloading the gemma4:e2b-it-qat vision model (about 4.3 GB)"
+    ollama pull gemma4:e2b-it-qat || echo "WARNING: 'ollama pull gemma4:e2b-it-qat' failed - run it by hand before the first alert." >&2
   fi
 fi
 

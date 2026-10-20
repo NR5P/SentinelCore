@@ -30,6 +30,9 @@ public sealed class OllamaChatClient : IOllamaChatClient
         {
             model = _optionsMonitor.CurrentValue.Model,
             stream = false,
+            // Same reason as OllamaVisionClient: a thinking model would spend a minute or more on a
+            // hidden scratchpad before answering on a CPU box. Ignored by models without thinking.
+            think = false,
             // Ollama defaults to a small context window (often 2-4k tokens) unless told
             // otherwise, silently truncating whatever doesn't fit - confirmed the hard way once
             // the system prompt started including the full app documentation alongside the

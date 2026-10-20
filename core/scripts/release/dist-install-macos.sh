@@ -111,7 +111,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "WARNING: ffmpeg is not installed. Live view, trigger zones and clip recording won't work." >&2
 fi
 if ! command -v ollama >/dev/null 2>&1; then
-  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma3:4b'," >&2
+  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma4:e2b-it-qat'," >&2
   echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
 fi
 

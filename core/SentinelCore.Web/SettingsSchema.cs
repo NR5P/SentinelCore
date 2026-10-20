@@ -265,8 +265,18 @@ public static class SettingsSchema
         "installed models",
         "Lists the models already pulled on the machine running Ollama, so you can pick one instead of typing its exact tag. Typing a name that isn't listed still works - that's how you point at a model you're about to pull.",
         "/api/settings/ollama/models",
-        "Ollama answered, but no models are pulled on that machine yet. Run \"ollama pull gemma3:4b\" there, then check again.",
-        "Type the model's exact name, tag and all - e.g. gemma3:4b.");
+        "Ollama answered, but no models are pulled on that machine yet. Run \"ollama pull gemma4:e2b-it-qat\" there, then check again.",
+        "Type the model's exact name, tag and all - e.g. gemma4:e2b-it-qat.");
+
+    // The vision Model box's list: the installed models plus the recommended vision models not yet
+    // downloaded. Picking one of those is enough - the main app downloads it and switches over when
+    // it's done (OllamaModelProvisioner), so the old "pull it first" step is gone.
+    private static readonly SettingsOptionsSourceSchema OllamaVisionModels = new(
+        "recommended and installed models",
+        "Lists recommended vision models and the ones already on the machine running Ollama. Pick one that isn't downloaded yet and save: it downloads in the background, alerts keep using the current model meanwhile, and it switches over by itself when the download finishes. Reopen the list to see how far along it is. Typing any other Ollama model name works the same way.",
+        "/api/settings/ollama/vision-models",
+        "Ollama answered, but has no models yet. Pick gemma4:e2b-it-qat - it downloads when you save.",
+        "Type the model's exact name, tag and all - e.g. gemma4:e2b-it-qat. It downloads when you save.");
 
     // The cloud counterpart. Same contract, and deliberately the same mechanism: the provider is
     // asked what it has rather than this app carrying a list of model names that goes stale every
@@ -368,8 +378,8 @@ public static class SettingsSchema
             Description = "Tuning for the local AI that looks at your snapshots. The defaults are picked to keep descriptions literal and consistent, which is what you want for security alerts. You can ignore this section entirely unless answers are coming back wrong or too slowly.",
             Fields =
             [
-                Text("model", "Model", "Which local vision model analyses the snapshots, e.g. gemma3:4b. It must already be pulled in Ollama - pick one from the list to be sure of the exact tag. Not every model can see images; a text-only one saves fine here and then fails on every alert.",
-                    optionsSource: OllamaModels),
+                Text("model", "Model", "Which local vision model analyses the snapshots, e.g. gemma4:e2b-it-qat. If it isn't downloaded yet it downloads by itself when you save, and alerts keep using the current model until it's ready. Not every model can see images; a text-only one saves fine here and then fails on every alert.",
+                    optionsSource: OllamaVisionModels),
                 Text("keepAlive", "Keep Alive", "How long Ollama keeps the model loaded in memory between alerts, e.g. 5m. Longer means faster replies but more RAM held."),
                 Number("temperature", "Temperature", "How much the model is allowed to improvise. Low values keep descriptions consistent and literal, which is what you want here.", 0, 2, 0.1),
                 Number("maximumOutputTokens", "Max Output Tokens", "Ceiling on the length of the model's reply. Too low and the analysis gets cut off mid-sentence.", 32, 4096),

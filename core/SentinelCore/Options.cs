@@ -104,7 +104,7 @@ public sealed class OllamaOptions
     public string BaseUrl { get; init; } = "http://127.0.0.1:11434";
 
     [Required]
-    public string Model { get; init; } = "gemma3:4b";
+    public string Model { get; init; } = "gemma4:e2b-it-qat";
 
     [Range(5, 1800)]
     public int RequestTimeoutSeconds { get; init; } = 300;
@@ -818,7 +818,7 @@ public sealed class TelegramChatOptions
     public int MaxEventsInContext { get; init; } = 100;
 
     [Required]
-    public string Model { get; init; } = "gemma3:4b";
+    public string Model { get; init; } = "gemma4:e2b-it-qat";
 
     [Range(1, 60)]
     public int PollTimeoutSeconds { get; init; } = 25;

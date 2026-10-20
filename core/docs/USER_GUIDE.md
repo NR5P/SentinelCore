@@ -1892,12 +1892,15 @@ The full list below covers both modes:
   size, how long events/images are kept before automatic cleanup, whether images are saved at
   all, and which image content-types are accepted. (This section was called **Bridge** in
   earlier versions, which described how it was built rather than what it does.)
-- **Ollama** — which local vision model analyzes snapshots (must already be pulled in
-  Ollama), how long it's kept loaded in memory between alerts, and inference tuning
-  (temperature, top-K/top-P, output token limit, retries). The **Model** box is a dropdown of
-  the models actually pulled on the machine running Ollama, so you don't have to remember the
-  exact tag — pick "type a name instead" to name one you haven't pulled yet, and if Ollama
-  can't be reached the box stays an ordinary one you can type into.
+- **Ollama** — which local vision model analyzes snapshots, how long it's kept loaded in
+  memory between alerts, and inference tuning (temperature, top-K/top-P, output token limit,
+  retries). The **Model** box is a dropdown of recommended vision models, fastest first
+  (`gemma4:e2b-it-qat` is the default and the quickest), plus any other models already on the
+  machine running Ollama. Picking one that isn't downloaded yet is all it takes: save, and it
+  downloads in the background while alerts keep using the current model, then switches over by
+  itself when it's done — reopen the list to see how far along it is. Pick "type a name
+  instead" to name any other Ollama model (it downloads the same way), and if Ollama can't be
+  reached the box stays an ordinary one you can type into.
 - **Cloud Vision** and **Vision Routing** — an offsite AI model that can analyze alerts instead
   of, or as an automatic backup for, the local Ollama model. Anthropic, Google, and OpenAI or
   anything else speaking its format, with a **test cloud vision** button to prove the account

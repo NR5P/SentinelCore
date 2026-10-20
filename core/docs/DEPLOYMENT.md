@@ -84,7 +84,7 @@ you'd rather do it by hand.
   both on one machine avoids needing a second box. See [section 8b](#8b-windows) for what
   differs there, and [section 8c](#8c-macos) for macOS.
 - **.NET 10 SDK**
-- **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`) -
+- **Ollama**, running locally, with a vision-capable model (default `gemma4:e2b-it-qat`, downloaded automatically) -
   required for the default configuration. An offsite Cloud Vision backend (OpenAI, Anthropic, or
   Google) can be used
   instead, or as an automatic fallback, with no local install of its own - just an API key in
@@ -127,8 +127,14 @@ Install and start Ollama, then pull the model:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma3:4b
+ollama pull gemma4:e2b-it-qat
 ```
+
+You can skip the pull: if the model set in `Ollama:Model` isn't installed, the main service
+downloads it by itself on startup. The same goes for picking a different model in
+**Settings → Ollama → Model** - the list includes recommended models that aren't downloaded yet;
+pick one, save, and it downloads in the background while alerts keep using the current model,
+then switches over when the download finishes. Reopen the list to see its progress.
 
 #### Turn off Ollama's prompt cache (the installers do this for you)
 
@@ -138,7 +144,7 @@ camera alert carries a different image, so the cache never gets a hit - it just 
 memory every few hours. Turning it off costs nothing for this app.
 
 `install-linux.sh`, `install-windows.ps1` and the release-bundle installers set this up (and pull
-`gemma3:4b` if it's missing) whenever Ollama is present.
+`gemma4:e2b-it-qat` if it's missing) whenever Ollama is present.
 To do it by hand:
 
 - **Linux** - once you have the code (section 3):
@@ -309,8 +315,8 @@ into the `HttpClient` once at startup and can only be changed by hand here:
 - `Ollama:RequestTimeoutSeconds` — how long one request to Ollama may take before it's
   abandoned and retried (default `300`, allowed range 5–1800). This is a ceiling, not a
   target, but on CPU-only hardware it is not a generous one: on the reference box a
-  `gemma3:4b` alert takes **150–190 s** end to end (queue wait included) with a single alert
-  in flight, so a slower machine or a larger model can reach 300 s. If analyses fail on
+  `gemma3:4b` alert took **150–190 s** end to end (queue wait included) with a single alert
+  in flight, and the default `gemma4:e2b-it-qat` about 70 s, so a slower machine or a larger model can reach 300 s. If analyses fail on
   timeout rather than on a model error, raise this before changing anything else.
   **Restart the service after editing.**
 
@@ -553,7 +559,7 @@ Run each in its own terminal. Stop with Ctrl+C.
 ```
 
 It installs what's missing (.NET, ffmpeg, Node.js, Ollama), sets Ollama up for this app (pulls
-`gemma3:4b` and turns off its memory-hungry prompt cache - see
+`gemma4:e2b-it-qat` and turns off its memory-hungry prompt cache - see
 [section 2](#turn-off-ollamas-prompt-cache-the-installers-do-this-for-you)), builds, runs the
 tests, installs and starts all three services (alert pipeline, dashboard, and — if Node.js is
 present — the HomeKit sidecar), then prints a health check.

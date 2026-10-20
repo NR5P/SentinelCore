@@ -320,6 +320,18 @@ builder.Services.AddHttpClient<OllamaVisionClient>(client =>
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(ollamaSettings.RequestTimeoutSeconds);
 });
+// Pulls Ollama:Model when it isn't installed yet, so picking a model in Settings is all it takes.
+// No timeout: a multi-gigabyte pull on a slow line legitimately takes a long time.
+builder.Services.AddHttpClient(nameof(OllamaModelProvisioner), client =>
+{
+    client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+builder.Services.AddSingleton(sp => new OllamaModelProvisioner(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(OllamaModelProvisioner)),
+    sp.GetRequiredService<IOptionsMonitor<OllamaOptions>>(),
+    sp.GetRequiredService<ILogger<OllamaModelProvisioner>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<OllamaModelProvisioner>());
 var cloudVisionSettings = builder.Configuration.GetSection(CloudVisionOptions.SectionName).Get<CloudVisionOptions>() ?? new();
 // Only actually used when CloudVision:Provider is "openai" - that's also the slot for any other
 // OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, a local vLLM/LM Studio server, etc.).
@@ -769,6 +781,7 @@ app.MapAutomationRuleEndpoints();
 app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
 app.MapHubBackupEndpoints();
+app.MapGet("/api/ollama/model-status", (OllamaModelProvisioner provisioner) => Results.Ok(provisioner.Status));
 app.MapNotificationTestEndpoints();
 app.MapCloudVisionTestEndpoints();
 

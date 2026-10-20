@@ -15,18 +15,27 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
     private readonly IOptionsMonitor<OllamaOptions> _optionsMonitor;
     private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<OllamaVisionClient> _logger;
+    private readonly OllamaModelProvisioner? _provisioner;
 
+    // provisioner is optional only so tests can build the client without the background service;
+    // without it, alerts always go to the configured model.
     public OllamaVisionClient(
         HttpClient httpClient,
         IOptionsMonitor<OllamaOptions> options,
         IImageOptimizer imageOptimizer,
-        ILogger<OllamaVisionClient> logger)
+        ILogger<OllamaVisionClient> logger,
+        OllamaModelProvisioner? provisioner = null)
     {
         _httpClient = httpClient;
         _optionsMonitor = options;
         _imageOptimizer = imageOptimizer;
         _logger = logger;
+        _provisioner = provisioner;
     }
+
+    // The configured model, or - while a newly picked one is still downloading - the one that was
+    // working before (see OllamaModelProvisioner).
+    private string ModelForAlerts => _provisioner?.ModelForAlerts ?? _optionsMonitor.CurrentValue.Model;
 
     public async Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
         IncomingAlert alert,
@@ -54,10 +63,16 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             alert.Id,
             prompt.Length);
 
+        var model = ModelForAlerts;
         var request = new
         {
-            model = _options.Model,
+            model,
             stream = false,
+            // Thinking models (Gemma 4, Qwen3 "thinking") otherwise write a long hidden scratchpad
+            // first. On a CPU box that is over a minute per alert, and with MaximumOutputTokens at
+            // 512 it used up the whole budget and returned an empty answer on most alerts (bench,
+            // 2026-10-19). Models without a thinking mode accept false and ignore it.
+            think = false,
             keep_alive = _options.KeepAlive,
             // A full JSON schema, not the plain "json" mode: Ollama (0.5+) constrains generation
             // to the schema, so malformed JSON, missing fields, and invented property names -
@@ -175,7 +190,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
                     evalCount,
                     outputTokensPerSecond);
 
-                return (analysis, raw, _options.Model);
+                return (analysis, raw, model);
             }
             catch (Exception ex) when (
                 ex is HttpRequestException or TaskCanceledException or JsonException)
@@ -223,12 +238,12 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
                 JsonOptions,
                 cancellationToken);
 
-            var configured = _optionsMonitor.CurrentValue.Model;
+            var configured = ModelForAlerts;
             if (string.IsNullOrWhiteSpace(configured))
                 return false;
 
             var installed = tags?.Models ?? [];
-            if (installed.Any(m => IsSameModel(m.Name, configured)))
+            if (installed.Any(m => OllamaModelProvisioner.IsSameModel(m.Name, configured)))
                 return true;
 
             _logger.LogWarning(
@@ -241,20 +256,6 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
         {
             return false;
         }
-    }
-
-    // Ollama reports fully-qualified names ("gemma3:4b"), and an untagged configured value
-    // means the "latest" tag - so "gemma3" should match an installed "gemma3:latest".
-    private static bool IsSameModel(string? installed, string configured)
-    {
-        if (string.IsNullOrWhiteSpace(installed))
-            return false;
-
-        if (installed.Equals(configured, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return !configured.Contains(':', StringComparison.Ordinal)
-            && installed.Equals($"{configured}:latest", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record OllamaTagsResponse(IReadOnlyList<OllamaTag>? Models);

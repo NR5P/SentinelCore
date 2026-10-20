@@ -19,7 +19,7 @@ The queue lets the sender receive `202 Accepted` immediately instead of waiting 
 ## Prerequisites
 
 - Ollama running on the Linux host
-- `gemma3:4b` installed: `ollama pull gemma3:4b`
+- A vision model - `gemma4:e2b-it-qat` by default, downloaded automatically on first start
 - .NET 10 SDK
 - Whatever is sending alerts (e.g. Blue Iris) can reach the Linux host over the LAN
 
@@ -42,7 +42,7 @@ Edit `SentinelCore/appsettings.json`:
 1. Replace `Bridge:ApiKey` with a long random value, for example:
    `openssl rand -hex 32`
 2. Change questions in `PromptProfiles`.
-3. Keep `Ollama:Model` as `gemma3:4b`.
+3. Keep `Ollama:Model` as `gemma4:e2b-it-qat` (or pick another in Settings - it downloads itself).
 4. Optionally enable the webhook action.
 
 To analyze alerts with something other than the local VLM — a hosted model, or the fast ONNX detector in front of it — see [Vision backends](#vision-backends) below.
@@ -229,7 +229,7 @@ It works by long-polling Telegram's `getUpdates` API (outbound only), so no inbo
   "Enabled": true,
   "LookbackDays": 3,
   "MaxEventsInContext": 100,
-  "Model": "gemma3:4b",
+  "Model": "gemma4:e2b-it-qat",
   "PollTimeoutSeconds": 25,
   "TimeoutSeconds": 300
 }

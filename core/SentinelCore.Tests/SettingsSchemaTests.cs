@@ -863,7 +863,9 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var sections = document.RootElement.EnumerateArray().ToArray();
 
-        foreach (var key in (string[])["ollama", "telegramChat"])
+        // The vision box lists recommended models too (they download on save); the chat box only
+        // what is installed.
+        foreach (var (key, endpoint) in (ValueTuple<string, string>[])[("ollama", "/api/settings/ollama/vision-models"), ("telegramChat", "/api/settings/ollama/models")])
         {
             var model = sections.Single(s => s.GetProperty("key").GetString() == key)
                 .GetProperty("fields").EnumerateArray()
@@ -874,7 +876,7 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
             Assert.Equal("text", model.GetProperty("type").GetString());
 
             var source = model.GetProperty("optionsSource");
-            Assert.Equal("/api/settings/ollama/models", source.GetProperty("endpoint").GetString());
+            Assert.Equal(endpoint, source.GetProperty("endpoint").GetString());
             Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("label").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("emptyMessage").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("typeItMessage").GetString()));
