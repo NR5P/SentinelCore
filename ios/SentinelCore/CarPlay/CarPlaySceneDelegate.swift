@@ -46,21 +46,32 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     private var client: SentinelClient { model.client }
     private var player: AudioPlayer { AudioPlayer.shared }
 
-    private let musicTab = CPListTemplate(title: "Music", sections: [])
-    private let podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
-    private let homeTab = CPListTemplate(title: "Home", sections: [])
-    private let alertsTab = CPListTemplate(title: "Alerts", sections: [])
+    // Made afresh on every connect: a template belongs to the interface controller it was first
+    // shown on, so one kept from an earlier connection (a wireless adapter that connects, drops
+    // and reconnects while the car starts up) takes updates that never reach the car's screen,
+    // which then says "Loading..." forever.
+    private var musicTab = CPListTemplate(title: "Music", sections: [])
+    private var podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
+    private var homeTab = CPListTemplate(title: "Home", sections: [])
+    private var alertsTab = CPListTemplate(title: "Alerts", sections: [])
+    private var allTabs: [CPListTemplate] { [musicTab, podcastsTab, homeTab, alertsTab] }
     private var pollTask: Task<Void, Never>?
     private var nowPlayingTask: Task<Void, Never>?
 
     func connect(_ interface: CPInterfaceController) {
+        model.log("CarPlay connected (\(model.connectionState.label))")
+        pollTask?.cancel()
         self.interface = interface
+        musicTab = CPListTemplate(title: "Music", sections: [])
+        podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
+        homeTab = CPListTemplate(title: "Home", sections: [])
+        alertsTab = CPListTemplate(title: "Alerts", sections: [])
         musicTab.tabImage = UIImage(systemName: "music.note")
         podcastsTab.tabImage = UIImage(systemName: "mic")
         homeTab.tabImage = UIImage(systemName: "house")
         alertsTab.tabImage = UIImage(systemName: "bell")
-        for tab in [musicTab, podcastsTab, homeTab, alertsTab] {
-            tab.emptyViewTitleVariants = ["Loading…"]
+        for tab in allTabs {
+            tab.emptyViewTitleVariants = ["Loading\u{2026}"]
         }
         var tabs = [musicTab, podcastsTab]
         if Self.controlsEnabled { tabs += [homeTab, alertsTab] }
@@ -69,16 +80,26 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         interface.setRootTemplate(root, animated: false, completion: nil)
         configureNowPlaying()
 
-        pollTask?.cancel()
         pollTask = Task { [weak self] in
-            guard let self else { return }
-            guard await self.ready() else { return }
-            await self.loadMusic()
-            await self.loadPodcasts()
-            // Home and Alerts keep themselves current while the car is connected - a garage
-            // door shown "open" shouldn't stay that way after it closes.
+            // Until connected, retried every 15 seconds - the car often comes up before the
+            // phone has signal. Once connected, Music and Podcasts load once (re-read when their
+            // tab is picked) and Home and Alerts keep themselves current: a garage door shown
+            // "open" shouldn't stay that way after it closes.
+            var audioLoaded = false
             var tick = 0
-            while !Task.isCancelled, Self.controlsEnabled {
+            while !Task.isCancelled, let self {
+                guard await self.ready() else {
+                    audioLoaded = false
+                    try? await Task.sleep(for: .seconds(15))
+                    continue
+                }
+                if !audioLoaded {
+                    async let music: Void = self.loadMusic()
+                    async let podcasts: Void = self.loadPodcasts()
+                    _ = await (music, podcasts)
+                    audioLoaded = true
+                }
+                guard Self.controlsEnabled else { return }
                 await self.loadHome()
                 if tick % 6 == 0 { await self.loadAlerts() }
                 tick += 1
@@ -88,6 +109,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     }
 
     func disconnect() {
+        model.log("CarPlay disconnected")
         pollTask?.cancel()
         nowPlayingTask?.cancel()
         interface = nil
@@ -102,34 +124,36 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     // MARK: - Connection
 
     // CarPlay can be the first thing to launch the app (phone in a pocket), so nothing may have
-    // connected yet. Same wait as Siri's alarm intents.
+    // connected yet. The wait is bounded: connect() loads the whole app (events, cameras, push),
+    // each request with a 60-second timeout, and the car shouldn't sit on "Loading" through that.
     private func ready() async -> Bool {
+        if model.connectionState == .online { return true }
         guard model.isConfigured else {
             showMessage("Sentinel Core isn't set up yet. When it's safe, open it on your iPhone.")
             return false
         }
-        if model.connectionState != .online {
-            await model.connect()
-            var polls = 0
-            while model.connectionState == .checking, polls < 50 {
-                try? await Task.sleep(for: .milliseconds(200))
-                polls += 1
-            }
+        // Unstructured, so the connection carries on (and the phone app gets it) if the wait
+        // below gives up first. connect() coalesces with one already in flight.
+        Task { await self.model.connect() }
+        let deadline = ContinuousClock.now + .seconds(20)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(250))
+            if model.connectionState == .online { return true }
+            if !model.isConnecting, model.connectionState != .checking { break }
         }
-        guard model.connectionState == .online else {
-            showMessage(model.connectionState == .authenticationRequired
-                        ? "Signed out. When it's safe, sign in on your iPhone."
-                        : "Can't reach your Sentinel Core server.")
-            // Downloads still play offline.
-            return model.connectionState == .offline
-        }
-        return true
+        model.log("CarPlay: not connected after 20s (\(model.connectionState.label)); retrying in 15s", level: .notice)
+        showMessage(model.connectionState == .authenticationRequired
+                    ? "Signed out. When it's safe, sign in on your iPhone."
+                    : "Can't reach your Sentinel Core server. Trying again\u{2026}")
+        return false
     }
 
+    // The empty-view text before the (empty) sections: CarPlay redraws on updateSections, so the
+    // other order can leave the old text showing.
     private func showMessage(_ text: String) {
-        for tab in [musicTab, podcastsTab, homeTab, alertsTab] {
-            tab.updateSections([])
+        for tab in allTabs {
             tab.emptyViewTitleVariants = [text]
+            tab.updateSections([])
         }
     }
 
@@ -140,11 +164,15 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     private func loadMusic() async {
         let enabled = (try? await client.audioEnabled())?.music ?? model.musicEnabled
         guard enabled else {
-            musicTab.updateSections([])
             musicTab.emptyViewTitleVariants = ["Music is turned off on your server."]
+            musicTab.updateSections([])
             return
         }
-        let home = try? await client.musicHome()
+        let home: MusicHome?
+        do { home = try await client.musicHome() } catch {
+            home = nil
+            model.log("CarPlay: Music couldn't load: \(error.localizedDescription)", level: .error)
+        }
         var sections: [CPListSection] = []
 
         let shuffle = item("Shuffle All", detail: "\(home?.trackCount ?? 0) songs", symbol: "shuffle") { [weak self] in
@@ -174,6 +202,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         ]
         sections.append(CPListSection(items: browse, header: "Library", sectionIndexTitle: nil))
         musicTab.updateSections(sections)
+        model.log("CarPlay: Music loaded (\(sections.count) sections)")
         if home == nil { musicTab.emptyViewTitleVariants = ["Can't reach your Sentinel Core server."] }
     }
 
@@ -290,12 +319,18 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     private func loadPodcasts() async {
         let enabled = (try? await client.audioEnabled())?.podcasts ?? model.podcastsEnabled
         guard enabled else {
-            podcastsTab.updateSections([])
             podcastsTab.emptyViewTitleVariants = ["Podcasts are turned off on your server."]
+            podcastsTab.updateSections([])
             return
         }
-        guard let home = try? await client.podcastHome() else {
+        let loaded: PodcastHome?
+        do { loaded = try await client.podcastHome() } catch {
+            loaded = nil
+            model.log("CarPlay: Podcasts couldn't load: \(error.localizedDescription)", level: .error)
+        }
+        guard let home = loaded else {
             podcastsTab.emptyViewTitleVariants = ["Can't reach your Sentinel Core server."]
+            podcastsTab.updateSections([])
             return
         }
         var sections: [CPListSection] = []
@@ -319,8 +354,8 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         if !shows.isEmpty {
             sections.append(CPListSection(items: shows.prefix(listLimit).map(showItem), header: "Shows", sectionIndexTitle: nil))
         }
-        podcastsTab.updateSections(sections)
         podcastsTab.emptyViewTitleVariants = ["No podcasts yet. Subscribe on your phone."]
+        podcastsTab.updateSections(sections)
     }
 
     private func showItem(_ show: Podcast) -> CPListItem {
@@ -442,8 +477,8 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                 sections.append(CPListSection(items: scenes.prefix(listLimit).map(sceneItem), header: "Scenes", sectionIndexTitle: nil))
             }
         }
-        homeTab.updateSections(sections)
         homeTab.emptyViewTitleVariants = ["No alarm or devices are set up."]
+        homeTab.updateSections(sections)
     }
 
     private func alarmItems(_ alarm: AlarmStatus) -> [CPListItem] {
@@ -572,7 +607,14 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     // MARK: - Alerts (driving task)
 
     private func loadAlerts() async {
-        guard let activity = try? await client.activity(notifiedOnly: true) else { return }
+        guard let activity = try? await client.activity(notifiedOnly: true) else {
+            // Left as it was if alerts have shown before; never left on "Loading".
+            if alertsTab.sections.isEmpty {
+                alertsTab.emptyViewTitleVariants = ["Couldn't load recent alerts."]
+                alertsTab.updateSections([])
+            }
+            return
+        }
         let recent = activity.filter(\.notified).sorted { $0.occurredAt > $1.occurredAt }.prefix(listLimit)
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
@@ -583,8 +625,8 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
             let detail = [event.summary.map { String($0.prefix(100)) }, when].compactMap { $0 }.joined(separator: " · ")
             return CPListItem(text: title, detailText: detail)
         }
-        alertsTab.updateSections([CPListSection(items: Array(rows))])
         alertsTab.emptyViewTitleVariants = ["No recent alerts."]
+        alertsTab.updateSections(rows.isEmpty ? [] : [CPListSection(items: Array(rows))])
     }
 
     // MARK: - Building blocks

@@ -132,7 +132,7 @@ final class AppModel: ObservableObject {
     private var organizerWidgets: OrganizerWidgetBridge?
     #endif
     private var localNetworkBrowser: NWBrowser?
-    private var isConnecting = false
+    private(set) var isConnecting = false
     private var pendingPushEventId: UUID?
     private var observers: [NSObjectProtocol] = []
 
