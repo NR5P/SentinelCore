@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,9 @@ public interface IEventStore
     // Distinct camera names and event types actually present in history, for populating
     // filter dropdowns - independent of whatever filter is currently applied.
     Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken);
+
+    // Every alert received at or after since, any status, for AiSpeedStats/AiSlowdownRule.
+    Task<IReadOnlyList<AnalysisTimingRow>> GetAnalysisTimingsAsync(DateTimeOffset since, CancellationToken cancellationToken);
 }
 
 public sealed record EventFilter(
@@ -162,6 +166,17 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             backfill.ExecuteNonQuery();
         }
 
+        // Ollama's own timing for each analysis (see AnalysisTiming), for the AI SPEED card. NULL
+        // on older rows and from other backends.
+        AddColumnIfMissing("AlertEvents", "ModelLoadSeconds", "REAL");
+        AddColumnIfMissing("AlertEvents", "PromptSeconds", "REAL");
+        AddColumnIfMissing("AlertEvents", "ResponseSeconds", "REAL");
+        using (var receivedIndex = _connection.CreateCommand())
+        {
+            receivedIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_AlertEvents_ReceivedAt ON AlertEvents(ReceivedAt);";
+            receivedIndex.ExecuteNonQuery();
+        }
+
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_AlertEvents_IncidentId ON AlertEvents(IncidentId);";
         incidentIndex.ExecuteNonQuery();
@@ -194,11 +209,13 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                 INSERT INTO AlertEvents
                     (Id, Camera, BlueIrisAlertId, OccurredAt, ReceivedAt, CompletedAt, Profile, Model, Status,
                      ImagePath, EventType, Summary, NotificationRecommended, NotificationReason, Confidence, Error,
-                     LinkedCameras, IncidentId, PackageTheftReason, Embedding, SubjectConfirmed)
+                     LinkedCameras, IncidentId, PackageTheftReason, Embedding, SubjectConfirmed,
+                     ModelLoadSeconds, PromptSeconds, ResponseSeconds)
                 VALUES
                     ($id, $camera, $blueIrisAlertId, $occurredAt, $receivedAt, $completedAt, $profile, $model, $status,
                      $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error,
-                     $linkedCameras, $incidentId, $packageTheftReason, $embedding, $subjectConfirmed)
+                     $linkedCameras, $incidentId, $packageTheftReason, $embedding, $subjectConfirmed,
+                     $modelLoadSeconds, $promptSeconds, $responseSeconds)
                 ON CONFLICT(Id) DO UPDATE SET
                     CompletedAt = excluded.CompletedAt,
                     Model = excluded.Model,
@@ -220,7 +237,10 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                     IncidentId = COALESCE(excluded.IncidentId, AlertEvents.IncidentId),
                     PackageTheftReason = excluded.PackageTheftReason,
                     Embedding = COALESCE(excluded.Embedding, AlertEvents.Embedding),
-                    SubjectConfirmed = excluded.SubjectConfirmed;
+                    SubjectConfirmed = excluded.SubjectConfirmed,
+                    ModelLoadSeconds = COALESCE(excluded.ModelLoadSeconds, AlertEvents.ModelLoadSeconds),
+                    PromptSeconds = COALESCE(excluded.PromptSeconds, AlertEvents.PromptSeconds),
+                    ResponseSeconds = COALESCE(excluded.ResponseSeconds, AlertEvents.ResponseSeconds);
                 """;
 
             command.Parameters.AddWithValue("$id", result.Id.ToString("N"));
@@ -249,7 +269,47 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                 "$subjectConfirmed",
                 AlertNotificationPolicy.AnalysisFoundSubject(result) is { } found ? found ? 1 : 0 : DBNull.Value);
 
+            var timing = result.Analysis?.Timing;
+            command.Parameters.AddWithValue("$modelLoadSeconds", (object?)timing?.ModelLoadSeconds ?? DBNull.Value);
+            command.Parameters.AddWithValue("$promptSeconds", (object?)timing?.PromptSeconds ?? DBNull.Value);
+            command.Parameters.AddWithValue("$responseSeconds", (object?)timing?.ResponseSeconds ?? DBNull.Value);
+
             await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<AnalysisTimingRow>> GetAnalysisTimingsAsync(DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Model, Camera, Status, ReceivedAt, CompletedAt, ModelLoadSeconds, PromptSeconds, ResponseSeconds
+                FROM AlertEvents
+                WHERE ReceivedAt >= $since;
+                """;
+            command.Parameters.AddWithValue("$since", ToUtcSortable(since));
+
+            var rows = new List<AnalysisTimingRow>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                rows.Add(new AnalysisTimingRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                    reader.IsDBNull(4) ? null : DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                    reader.IsDBNull(5) ? null : reader.GetDouble(5),
+                    reader.IsDBNull(6) ? null : reader.GetDouble(6),
+                    reader.IsDBNull(7) ? null : reader.GetDouble(7)));
+            }
+            return rows;
         }
         finally
         {

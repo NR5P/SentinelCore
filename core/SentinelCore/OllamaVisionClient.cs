@@ -190,6 +190,11 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
                     evalCount,
                     outputTokensPerSecond);
 
+                analysis.Timing = new AnalysisTiming(
+                    loadDuration / 1_000_000_000.0,
+                    promptEvalDuration / 1_000_000_000.0,
+                    evalDuration / 1_000_000_000.0);
+
                 return (analysis, raw, model);
             }
             catch (Exception ex) when (

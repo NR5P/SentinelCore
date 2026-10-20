@@ -475,7 +475,7 @@ window.GateWatchSettings = (function () {
 
   // Which of the hand-written sections belong in basic mode. The schema sections carry
   // their own `basic` flag; these don't have a schema, so they're listed here instead.
-  const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE", "SYSTEM HEALTH"]);
+  const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE", "SYSTEM HEALTH", "AI SPEED"]);
 
   // Which heading each hand-written section sits under. The schema sections carry `group` and
   // `groupOrder` from the server; these are rendered by hand here and so have to say for
@@ -488,6 +488,7 @@ window.GateWatchSettings = (function () {
     "PROMPT PROFILES": "AI & Detection",
     "APPLE HOMEKIT": "Automation & Smart Home",
     "SYSTEM HEALTH": "Health & Monitoring",
+    "AI SPEED": "Health & Monitoring",
     "LOGIN": "Access & Network",
     "BACKUP": "Maintenance",
     "LICENSE": "Maintenance"
@@ -2143,6 +2144,109 @@ window.GateWatchSettings = (function () {
     return section;
   }
 
+  const AI_SPEED_POLL_MS = 30_000;
+
+  function formatAiSeconds(seconds) {
+    if (seconds == null) return "–";
+    return seconds >= 100 ? `${seconds.toFixed(0)} s` : `${seconds.toFixed(1)} s`;
+  }
+
+  // A label/value row built with textContent: camera and model names are the owner's own text.
+  function buildAiSpeedRow(labelText, detailText, title) {
+    const row = document.createElement("div");
+    row.className = "system-stat-plain";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    const value = document.createElement("strong");
+    value.textContent = detailText;
+    if (title) row.title = title;
+    row.append(label, value);
+    return row;
+  }
+
+  // How long the AI takes to read each camera snapshot - from the snapshot arriving to the verdict,
+  // per model, out of /api/system/ai-speed (AiSpeedStats in the main app). Read-only, like SYSTEM
+  // HEALTH, and polled the same way: only while open.
+  function renderAiSpeedSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">AI SPEED</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "How long the AI takes to read each camera snapshot, from the snapshot arriving to its verdict. Read-only.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("How long each camera snapshot waits for the AI's verdict, including any time queued behind other snapshots. SELF-MONITORING warns you when this runs far slower than usual."));
+
+    const grid = document.createElement("div");
+    grid.className = "system-status-grid";
+    grid.innerHTML = `<div class="empty-state">checking AI speed&hellip;</div>`;
+    body.appendChild(grid);
+
+    function render(report) {
+      grid.innerHTML = "";
+      const models = report.models || [];
+      const current = models.find(m => m.model === report.currentModel) || models[0];
+      grid.appendChild(buildAiSpeedRow("Current model", report.currentModel || current?.model || "unknown"));
+      if (!current || (current.day.count === 0 && current.day.failed === 0)) {
+        grid.appendChild(buildAiSpeedRow("Last 24 hours", "no snapshots analysed"));
+      } else {
+        const day = current.day;
+        grid.appendChild(buildAiSpeedRow("Average (24 h)", formatAiSeconds(day.averageSeconds), `median ${formatAiSeconds(day.medianSeconds)}, 90% within ${formatAiSeconds(day.p90Seconds)}`));
+        grid.appendChild(buildAiSpeedRow("Slowest (24 h)", formatAiSeconds(day.slowestSeconds)));
+        grid.appendChild(buildAiSpeedRow("Snapshots (24 h)", day.failed > 0 ? `${day.count} (${day.failed} failed)` : `${day.count}`));
+      }
+      if (current && current.week.count > 0) {
+        grid.appendChild(buildAiSpeedRow("Average (7 days)", `${formatAiSeconds(current.week.averageSeconds)} over ${current.week.count}`));
+      }
+      for (const other of models.filter(m => m !== current && m.day.count > 0)) {
+        grid.appendChild(buildAiSpeedRow(other.model, `${formatAiSeconds(other.day.averageSeconds)} avg, ${other.day.count} today`));
+      }
+
+      const latest = report.latest || [];
+      if (latest.length > 0) {
+        const heading = document.createElement("div");
+        heading.className = "settings-hint";
+        heading.textContent = "Latest";
+        grid.appendChild(heading);
+        for (const sample of latest) {
+          const when = new Date(sample.completedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+          const breakdown = sample.promptSeconds != null
+            ? `load ${formatAiSeconds(sample.modelLoadSeconds)}, reading ${formatAiSeconds(sample.promptSeconds)}, writing ${formatAiSeconds(sample.responseSeconds)} (${sample.model})`
+            : sample.model;
+          grid.appendChild(buildAiSpeedRow(`${when} · ${sample.camera}`, formatAiSeconds(sample.seconds), breakdown));
+        }
+      }
+    }
+
+    async function refresh() {
+      if (!section.classList.contains("open") || section.offsetParent === null) return;
+      try {
+        const response = await fetch("/api/system/ai-speed");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch {
+        grid.innerHTML = `<div class="empty-state">could not load AI speed.</div>`;
+      }
+    }
+
+    let pollTimer = null;
+    header.addEventListener("click", () => {
+      if (!section.classList.contains("open")) return;
+      refresh();
+      if (!pollTimer) pollTimer = setInterval(refresh, AI_SPEED_POLL_MS);
+    });
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderLicenseSection() {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -2799,6 +2903,7 @@ window.GateWatchSettings = (function () {
       // basic flag the schema would have carried for them.
       for (const element of [
         renderSystemStatusSection(),
+        renderAiSpeedSection(),
         renderHomeKitSection(data.homeKit),
         renderBackupSection(),
         renderAuthSection(),

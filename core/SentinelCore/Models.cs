@@ -102,6 +102,12 @@ public sealed class VisionAnalysis
 
     [JsonPropertyName("package_theft_reason")]
     public string? PackageTheftReason { get; set; }
+
+    // Not part of the model's JSON output, and not written to the result files - Ollama's own
+    // timing for this analysis, set by OllamaVisionClient and kept by the event store for the
+    // AI SPEED card (see AiSpeedStats). Null from every other backend.
+    [JsonIgnore]
+    public AnalysisTiming? Timing { get; set; }
 }
 
 public sealed class GateAnalysis

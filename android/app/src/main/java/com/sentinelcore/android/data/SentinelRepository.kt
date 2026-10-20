@@ -1463,6 +1463,44 @@ class SentinelRepository(
         )
     }
 
+    suspend fun aiSpeed(): AiSpeedReport = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/system/ai-speed"))
+        fun window(item: JSONObject?) = AiSpeedWindow(
+            count = item?.optInt("count") ?: 0,
+            failed = item?.optInt("failed") ?: 0,
+            averageSeconds = item?.nullableDouble("averageSeconds"),
+            medianSeconds = item?.nullableDouble("medianSeconds"),
+            p90Seconds = item?.nullableDouble("p90Seconds"),
+            slowestSeconds = item?.nullableDouble("slowestSeconds"),
+        )
+        val models = json.optJSONArray("models") ?: JSONArray()
+        val latest = json.optJSONArray("latest") ?: JSONArray()
+        AiSpeedReport(
+            currentModel = json.nullableString("currentModel"),
+            requestTimeoutSeconds = json.optInt("requestTimeoutSeconds"),
+            models = (0 until models.length()).map { index ->
+                val item = models.getJSONObject(index)
+                AiSpeedModel(
+                    model = item.optString("model"),
+                    day = window(item.optJSONObject("day")),
+                    week = window(item.optJSONObject("week")),
+                )
+            },
+            latest = (0 until latest.length()).map { index ->
+                val item = latest.getJSONObject(index)
+                AiSpeedSample(
+                    model = item.optString("model"),
+                    camera = item.optString("camera"),
+                    completedAt = parseInstant(item.getString("completedAt")),
+                    seconds = item.optDouble("seconds"),
+                    modelLoadSeconds = item.nullableDouble("modelLoadSeconds"),
+                    promptSeconds = item.nullableDouble("promptSeconds"),
+                    responseSeconds = item.nullableDouble("responseSeconds"),
+                )
+            },
+        )
+    }
+
     suspend fun registerPushDevice(token: String, deviceName: String) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("platform", "android")

@@ -481,6 +481,46 @@ struct SystemStatus: Codable {
     }
 }
 
+// GET /api/system/ai-speed - how long the AI takes per camera snapshot (AiSpeedStats on the server).
+struct AiSpeedReport: Codable {
+    let currentModel: String?
+    let requestTimeoutSeconds: Int
+    let models: [AiSpeedModel]
+    let latest: [AiSpeedSample]
+
+    /// The model alerts are going to now, else whichever answered last.
+    var current: AiSpeedModel? {
+        models.first { $0.model == currentModel } ?? models.first
+    }
+}
+
+struct AiSpeedModel: Codable {
+    let model: String
+    let day: AiSpeedWindow
+    let week: AiSpeedWindow
+}
+
+struct AiSpeedWindow: Codable {
+    let count: Int
+    let failed: Int
+    let averageSeconds: Double?
+    let medianSeconds: Double?
+    let p90Seconds: Double?
+    let slowestSeconds: Double?
+}
+
+struct AiSpeedSample: Codable, Identifiable {
+    let model: String
+    let camera: String
+    let completedAt: Date
+    let seconds: Double
+    let modelLoadSeconds: Double?
+    let promptSeconds: Double?
+    let responseSeconds: Double?
+
+    var id: String { "\(camera)|\(completedAt.timeIntervalSince1970)" }
+}
+
 struct PushDeviceBody: Encodable {
     let platform: String
     let token: String

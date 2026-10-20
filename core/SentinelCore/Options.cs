@@ -892,6 +892,13 @@ public sealed class SelfMonitoringOptions
 
     [Range(0, 100)]
     public int ProcessMemoryWarningPercent { get; init; } = 50;
+
+    // Not read here either: the dashboard's AiSpeedWatchWorker (see AiSlowdownRule).
+    [Range(0, 20)]
+    public double AiSlowdownFactor { get; init; } = 2;
+
+    [Range(0, 100)]
+    public int AiTimeoutWarningPercent { get; init; } = 80;
 }
 
 public sealed class StartupNotificationOptions

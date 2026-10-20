@@ -434,6 +434,12 @@ builder.Services.AddSingleton(sp => new MemoryWatch(
     Path.Combine(camerasRoot, "memory-warnings-sent.json")));
 builder.Services.AddSingleton<IMemoryReader, HostMemoryReader>();
 builder.Services.AddHostedService<MemoryWatchWorker>();
+// ...and its AI speed warnings: the camera AI running far slower than its normal, or close to
+// Ollama's time limit.
+builder.Services.AddSingleton(sp => new AiSpeedWatch(
+    sp.GetRequiredService<IOwnerNotifier>(), sp.GetRequiredService<ILogger<AiSpeedWatch>>(), sp.GetRequiredService<TimeProvider>(),
+    Path.Combine(camerasRoot, "ai-speed-warnings-sent.json")));
+builder.Services.AddHostedService<AiSpeedWatchWorker>();
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
 // milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones

@@ -115,6 +115,18 @@ public static class SystemStatusEndpoints
             }
         }).RequireAuthorization();
 
+        // The AI SPEED card - see AiSpeedStats in the main app, which owns events.db's writer and
+        // knows which model alerts are actually going to right now. Read-only, any signed-in user,
+        // like the status above.
+        app.MapGet("/api/system/ai-speed", async (
+            IHttpClientFactory httpClientFactory,
+            AppSettingsFile mainAppSettings,
+            IConfiguration configuration,
+            ILogger<HostRebootForward> logger,
+            CancellationToken ct) =>
+            await ForwardAsync(HttpMethod.Get, "/api/ai-speed", httpClientFactory, mainAppSettings, configuration, logger, ct))
+            .RequireAuthorization();
+
         // Rebooting the machine the server runs on, as opposed to bouncing a process. All three
         // live in the main app - it is the one that knows which operating system this is and what
         // it is allowed to do there - so these are pure forwards, the same shape as the status

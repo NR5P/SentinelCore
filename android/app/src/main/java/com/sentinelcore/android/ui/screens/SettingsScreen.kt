@@ -46,6 +46,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.BuildConfig
+import com.sentinelcore.android.data.AiSpeedSample
+import kotlin.math.roundToInt
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.ui.SentinelUiState
@@ -410,6 +412,44 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsSection("AI speed") {
+                    state.aiSpeed?.let { speed ->
+                        val current = speed.current
+                        SettingsRow("Current model", speed.currentModel ?: current?.model ?: "Unknown")
+                        val day = current?.day
+                        if (day != null && (day.count > 0 || day.failed > 0)) {
+                            SettingsRow("Average (24 h)", formatAiSeconds(day.averageSeconds))
+                            SettingsRow("Slowest (24 h)", formatAiSeconds(day.slowestSeconds))
+                            SettingsRow("Snapshots (24 h)", if (day.failed > 0) "${day.count} (${day.failed} failed)" else "${day.count}")
+                        } else {
+                            Text("No snapshots analysed in the last 24 hours.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        current?.week?.takeIf { it.count > 0 }?.let { week ->
+                            SettingsRow("Average (7 days)", "${formatAiSeconds(week.averageSeconds)} over ${week.count}")
+                        }
+                        speed.latest.forEach { sample ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(sample.camera, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        describeAiSample(sample),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(formatAiSeconds(sample.seconds))
+                            }
+                        }
+                    } ?: Text("Could not load AI speed.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "How long each camera snapshot waits for the AI's verdict, including time queued behind others. Self-monitoring warns you when it runs far slower than usual.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            item {
                 SettingsSection("System") {
                     SettingsRow("Events loaded", state.activity.size.toString())
                     SettingsRow("Cameras", state.cameras.size.toString())
@@ -686,6 +726,19 @@ private fun formatBytes(bytes: Long): String {
         unit++
     }
     return if (unit == 0) "${value.toInt()} ${units[unit]}" else "%.1f %s".format(value, units[unit])
+}
+
+private fun formatAiSeconds(seconds: Double?): String = when {
+    seconds == null || seconds.isNaN() -> "–"
+    seconds >= 100 -> "${seconds.roundToInt()} s"
+    else -> "%.1f s".format(seconds)
+}
+
+// When it finished and, where Ollama reported it, how the AI's own time split up.
+private fun describeAiSample(sample: AiSpeedSample): String {
+    val time = sample.completedAt.shortTime()
+    val prompt = sample.promptSeconds ?: return "$time · ${sample.model}"
+    return "$time · load ${formatAiSeconds(sample.modelLoadSeconds)}, reading ${formatAiSeconds(prompt)}, writing ${formatAiSeconds(sample.responseSeconds)}"
 }
 
 private fun formatUptime(seconds: Double): String {

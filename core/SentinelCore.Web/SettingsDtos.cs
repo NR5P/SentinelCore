@@ -335,6 +335,13 @@ public sealed class SelfMonitoringSettingsDto
 
     [Range(0, 100)]
     public int ProcessMemoryWarningPercent { get; set; } = 50;
+
+    // Read by AiSpeedWatchWorker, here for the same OwnerNotifier reason. 0 turns one off.
+    [Range(0, 20)]
+    public double AiSlowdownFactor { get; set; } = 2;
+
+    [Range(0, 100)]
+    public int AiTimeoutWarningPercent { get; set; } = 80;
 }
 
 public sealed class StartupNotificationSettingsDto

@@ -390,6 +390,43 @@ data class SystemStatus(
         get() = if (diskTotalBytes > 0) diskUsedBytes.toDouble() / diskTotalBytes else 0.0
 }
 
+// GET /api/system/ai-speed - how long the AI takes per camera snapshot (AiSpeedStats on the server).
+data class AiSpeedReport(
+    val currentModel: String?,
+    val requestTimeoutSeconds: Int,
+    val models: List<AiSpeedModel>,
+    val latest: List<AiSpeedSample>,
+) {
+    /** The model alerts are going to now, else whichever answered last. */
+    val current: AiSpeedModel?
+        get() = models.firstOrNull { it.model == currentModel } ?: models.firstOrNull()
+}
+
+data class AiSpeedModel(
+    val model: String,
+    val day: AiSpeedWindow,
+    val week: AiSpeedWindow,
+)
+
+data class AiSpeedWindow(
+    val count: Int,
+    val failed: Int,
+    val averageSeconds: Double?,
+    val medianSeconds: Double?,
+    val p90Seconds: Double?,
+    val slowestSeconds: Double?,
+)
+
+data class AiSpeedSample(
+    val model: String,
+    val camera: String,
+    val completedAt: Instant,
+    val seconds: Double,
+    val modelLoadSeconds: Double?,
+    val promptSeconds: Double?,
+    val responseSeconds: Double?,
+)
+
 data class PushDeliveryReport(
     val attempted: Int,
     val delivered: Int,

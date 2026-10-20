@@ -103,6 +103,7 @@ final class AppModel: ObservableObject {
     @Published var selectedEvent: SecurityEvent?
     @Published var pushStatus: PushStatus?
     @Published var systemStatus: SystemStatus?
+    @Published var aiSpeed: AiSpeedReport?
     @Published var pushAuthorization = "NOT REQUESTED"
     @Published var pushRegistrationEnabled: Bool
     @Published var pushMessage: String?
@@ -1064,6 +1065,7 @@ final class AppModel: ObservableObject {
 
     func refreshSystemStatus() async {
         systemStatus = try? await client.systemStatus()
+        aiSpeed = try? await client.aiSpeed()
     }
 
     private func refreshPushAuthorization() async {

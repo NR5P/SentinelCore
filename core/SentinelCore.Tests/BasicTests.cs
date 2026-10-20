@@ -1605,6 +1605,9 @@ public sealed class BasicTests
 
         public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new EventFilterOptions([], []));
+
+        public Task<IReadOnlyList<AnalysisTimingRow>> GetAnalysisTimingsAsync(DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AnalysisTimingRow>>([]);
     }
 
     [Fact]
@@ -1984,6 +1987,9 @@ public sealed class BasicTests
 
         public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new EventFilterOptions([], []));
+
+        public Task<IReadOnlyList<AnalysisTimingRow>> GetAnalysisTimingsAsync(DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AnalysisTimingRow>>([]);
     }
 
     private sealed class FakeOllamaChatClient : IOllamaChatClient

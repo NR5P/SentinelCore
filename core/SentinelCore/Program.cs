@@ -782,6 +782,18 @@ app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
 app.MapHubBackupEndpoints();
 app.MapGet("/api/ollama/model-status", (OllamaModelProvisioner provisioner) => Results.Ok(provisioner.Status));
+// The AI SPEED card: how long each model has been taking per snapshot over the last day and week.
+// The dashboard forwards it as /api/system/ai-speed.
+app.MapGet("/api/ai-speed", async (
+    IEventStore events,
+    OllamaModelProvisioner provisioner,
+    IOptionsMonitor<OllamaOptions> ollama,
+    CancellationToken ct) =>
+{
+    var now = DateTimeOffset.UtcNow;
+    var rows = await events.GetAnalysisTimingsAsync(now - AiSpeedStats.Week, ct);
+    return Results.Ok(AiSpeedStats.Build(rows, now, provisioner.ModelForAlerts, ollama.CurrentValue.RequestTimeoutSeconds));
+});
 app.MapNotificationTestEndpoints();
 app.MapCloudVisionTestEndpoints();
 

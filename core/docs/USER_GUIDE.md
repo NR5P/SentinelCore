@@ -2837,6 +2837,23 @@ not waiting to see whether it clears. The default leaves several days of room at
 camera actually accumulates clips, and is set above the point where scheduled recordings start
 refusing to run, so you hear about it before something else breaks first.
 
+**AI speed.** Settings → **AI Speed** (on the web dashboard, iPhone, Mac, Android and Windows)
+shows how long each camera snapshot waits for the AI's verdict, per model: the average, slowest
+and count for the last 24 hours, the 7-day average, and the latest few with their camera. That
+time runs from the snapshot arriving to the verdict, so time spent queued behind other snapshots
+counts. Where Ollama reports it, each one also splits the AI's own time into loading the model,
+reading the image and prompt, and writing the answer. Two settings here warn you, by push, email
+and Telegram, at most once every 12 hours each:
+
+- **Warn When The AI Is (x) Slower** (default 2): the median of a model's last 5 snapshots is
+  more than this many times its median for the rest of the week. It needs 20 earlier snapshots of
+  that model before it has a normal to compare against.
+- **Warn When The AI Nears Its Time Limit (%)** (default 80): one of the last 5 took this share
+  of `Ollama:RequestTimeoutSeconds` (300 s by default). Past the limit the analysis is abandoned
+  and the alert fails.
+
+Both only look at a model that has answered in the last hour, and 0 turns either off.
+
 ## 16a. Spider webs and insects on the lens
 
 **On by default**, unlike the other outbound-message features — this is advice about your own

@@ -225,6 +225,43 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                if let speed = model.aiSpeed {
+                    LabeledContent("Current model", value: speed.currentModel ?? speed.current?.model ?? "Unknown")
+                    if let day = speed.current?.day, day.count > 0 || day.failed > 0 {
+                        LabeledContent("Average (24 h)", value: Self.formatAiSeconds(day.averageSeconds))
+                        LabeledContent("Slowest (24 h)", value: Self.formatAiSeconds(day.slowestSeconds))
+                        LabeledContent("Snapshots (24 h)", value: day.failed > 0 ? "\(day.count) (\(day.failed) failed)" : "\(day.count)")
+                    } else {
+                        Text("No snapshots analysed in the last 24 hours.")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let week = speed.current?.week, week.count > 0 {
+                        LabeledContent("Average (7 days)", value: "\(Self.formatAiSeconds(week.averageSeconds)) over \(week.count)")
+                    }
+                    ForEach(speed.latest) { sample in
+                        LabeledContent {
+                            Text(Self.formatAiSeconds(sample.seconds))
+                        } label: {
+                            Text(sample.camera)
+                            Text(Self.describeAiSample(sample))
+                        }
+                    }
+                } else {
+                    Text("Could not load AI speed.")
+                        .foregroundStyle(.secondary)
+                }
+                #if os(macOS)
+                MacSectionNote(text: Self.aiSpeedNote)
+                #endif
+            } header: {
+                Text("AI Speed")
+            } footer: {
+                #if os(iOS)
+                Text(Self.aiSpeedNote)
+                #endif
+            }
+
             Section("System") {
                 LabeledContent("Events loaded", value: "\(model.activity.count)")
                 LabeledContent("Cameras", value: "\(model.cameras.count)")
@@ -351,6 +388,20 @@ struct SettingsView: View {
 
     private static func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+
+    private static let aiSpeedNote = "How long each camera snapshot waits for the AI's verdict, including time queued behind others. Self-monitoring warns you when it runs far slower than usual."
+
+    private static func formatAiSeconds(_ seconds: Double?) -> String {
+        guard let seconds else { return "–" }
+        return seconds >= 100 ? "\(Int(seconds.rounded())) s" : String(format: "%.1f s", seconds)
+    }
+
+    /// When it finished, and where Ollama reported it, how the AI's own time split up.
+    private static func describeAiSample(_ sample: AiSpeedSample) -> String {
+        let time = sample.completedAt.formatted(date: .omitted, time: .shortened)
+        guard let prompt = sample.promptSeconds else { return "\(time) · \(sample.model)" }
+        return "\(time) · load \(formatAiSeconds(sample.modelLoadSeconds)), reading \(formatAiSeconds(prompt)), writing \(formatAiSeconds(sample.responseSeconds))"
     }
 
     private static func formatUptime(_ seconds: Double) -> String {

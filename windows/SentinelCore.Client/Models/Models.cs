@@ -510,6 +510,58 @@ public sealed class PushStatus
     public int RegisteredDevices { get; init; }
 }
 
+// GET /api/system/ai-speed - how long the AI takes per camera snapshot (AiSpeedStats on the server).
+public sealed class AiSpeedReport
+{
+    public string? CurrentModel { get; init; }
+    public int RequestTimeoutSeconds { get; init; }
+    public List<AiSpeedModel> Models { get; init; } = [];
+    public List<AiSpeedSample> Latest { get; init; } = [];
+
+    /// <summary>The model alerts are going to now, else whichever answered last.</summary>
+    [JsonIgnore]
+    public AiSpeedModel? Current => Models.FirstOrDefault(m => m.Model == CurrentModel) ?? Models.FirstOrDefault();
+
+    public static string FormatSeconds(double? seconds) =>
+        seconds is not { } value ? "–"
+        : value >= 100 ? $"{Math.Round(value):0} s"
+        : value.ToString("0.0 s", System.Globalization.CultureInfo.CurrentCulture);
+
+    /// <summary>When it finished and, where Ollama reported it, how the AI's own time split up.</summary>
+    public static string Describe(AiSpeedSample sample, string time) =>
+        sample.PromptSeconds is { } prompt
+            ? $"{time} · load {FormatSeconds(sample.ModelLoadSeconds)}, reading {FormatSeconds(prompt)}, writing {FormatSeconds(sample.ResponseSeconds)}"
+            : $"{time} · {sample.Model}";
+}
+
+public sealed class AiSpeedModel
+{
+    public string Model { get; init; } = "";
+    public AiSpeedWindow Day { get; init; } = new();
+    public AiSpeedWindow Week { get; init; } = new();
+}
+
+public sealed class AiSpeedWindow
+{
+    public int Count { get; init; }
+    public int Failed { get; init; }
+    public double? AverageSeconds { get; init; }
+    public double? MedianSeconds { get; init; }
+    public double? P90Seconds { get; init; }
+    public double? SlowestSeconds { get; init; }
+}
+
+public sealed class AiSpeedSample
+{
+    public string Model { get; init; } = "";
+    public string Camera { get; init; } = "";
+    public DateTimeOffset CompletedAt { get; init; }
+    public double Seconds { get; init; }
+    public double? ModelLoadSeconds { get; init; }
+    public double? PromptSeconds { get; init; }
+    public double? ResponseSeconds { get; init; }
+}
+
 public sealed class SystemStatus
 {
     public double CpuUsagePercent { get; init; }

@@ -363,6 +363,9 @@ public sealed partial class SentinelClient : IDisposable
     public Task<SystemStatus> SystemStatusAsync(CancellationToken ct = default) =>
         GetAsync<SystemStatus>("/api/system/status", ct: ct);
 
+    public Task<AiSpeedReport> AiSpeedAsync(CancellationToken ct = default) =>
+        GetAsync<AiSpeedReport>("/api/system/ai-speed", ct: ct);
+
     public Task<PushDeliveryReport> TestPushNotificationAsync(CancellationToken ct = default) =>
         SendAsync<PushDeliveryReport, object>("/api/push/test", HttpMethod.Post, null, ct);
 

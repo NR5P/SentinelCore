@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using SentinelCore.App.Design;
 using SentinelCore.Client;
+using SentinelCore.Client.Models;
 using SentinelCore.Client.Networking;
 using SentinelCore.Client.Organizer;
 
@@ -56,6 +57,9 @@ public partial class SettingsView : UserControl
                     break;
                 case nameof(AppModel.SystemStatus):
                     ApplyHealth();
+                    break;
+                case nameof(AppModel.AiSpeed):
+                    ApplyAiSpeed();
                     break;
                 case nameof(AppModel.UsingHttpFallback):
                     HttpFallbackNotice.Visibility = _model.UsingHttpFallback ? Visibility.Visible : Visibility.Collapsed;
@@ -137,6 +141,56 @@ public partial class SettingsView : UserControl
     {
         await _model.RefreshSystemStatusAsync();
         ApplyHealth();
+        ApplyAiSpeed();
+    }
+
+    private void ApplyAiSpeed()
+    {
+        AiSpeedRows.Children.Clear();
+        if (_model.AiSpeed is not { } speed)
+        {
+            AddAiSpeedRow("Unavailable", "");
+            return;
+        }
+
+        var current = speed.Current;
+        AddAiSpeedRow("Current model", speed.CurrentModel ?? current?.Model ?? "Unknown");
+        if (current?.Day is { } day && (day.Count > 0 || day.Failed > 0))
+        {
+            AddAiSpeedRow("Average (24 h)", AiSpeedReport.FormatSeconds(day.AverageSeconds));
+            AddAiSpeedRow("Slowest (24 h)", AiSpeedReport.FormatSeconds(day.SlowestSeconds));
+            AddAiSpeedRow("Snapshots (24 h)", day.Failed > 0 ? $"{day.Count} ({day.Failed} failed)" : $"{day.Count}");
+        }
+        else
+        {
+            AddAiSpeedRow("Last 24 hours", "No snapshots analysed");
+        }
+        if (current?.Week is { Count: > 0 } week)
+            AddAiSpeedRow("Average (7 days)", $"{AiSpeedReport.FormatSeconds(week.AverageSeconds)} over {week.Count}");
+
+        foreach (var sample in speed.Latest)
+        {
+            var time = sample.CompletedAt.ToLocalTime().ToString("t", System.Globalization.CultureInfo.CurrentCulture);
+            AddAiSpeedRow(sample.Camera, AiSpeedReport.FormatSeconds(sample.Seconds), AiSpeedReport.Describe(sample, time));
+        }
+    }
+
+    private void AddAiSpeedRow(string label, string value, string? detail = null)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var labelText = new TextBlock { Text = label, Style = (Style)FindResource("Caption"), TextTrimming = TextTrimming.CharacterEllipsis };
+        var valueStack = new StackPanel();
+        valueStack.Children.Add(new TextBlock { Text = value, Style = (Style)FindResource("BodyText") });
+        if (detail is not null)
+            valueStack.Children.Add(new TextBlock { Text = detail, Style = (Style)FindResource("Caption"), TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(valueStack, 1);
+
+        row.Children.Add(labelText);
+        row.Children.Add(valueStack);
+        AiSpeedRows.Children.Add(row);
     }
 
     private void ApplyHealth()

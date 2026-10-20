@@ -338,6 +338,14 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         private set => SetProperty(ref _pushStatus, value);
     }
 
+    private AiSpeedReport? _aiSpeed;
+
+    public AiSpeedReport? AiSpeed
+    {
+        get => _aiSpeed;
+        private set => SetProperty(ref _aiSpeed, value);
+    }
+
     private SystemStatus? _systemStatus;
 
     public SystemStatus? SystemStatus
@@ -1100,6 +1108,15 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         catch (Exception)
         {
             SystemStatus = null;
+        }
+
+        try
+        {
+            AiSpeed = await Client.AiSpeedAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            AiSpeed = null;
         }
     }
 

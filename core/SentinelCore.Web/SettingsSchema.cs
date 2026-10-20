@@ -847,7 +847,7 @@ public static class SettingsSchema
             Endpoint = "/api/settings/self-monitoring",
             Basic = false,
             DtoType = typeof(SelfMonitoringSettingsDto),
-            Description = "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, alerts backing up faster than they're processed, or the server running short of memory. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
+            Description = "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive or much slower than usual, alerts backing up faster than they're processed, or the server running short of memory. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
             Fields =
             [
                 Check("enabled", "Enabled", "Watch the bridge's own health and tell you if it stops working properly."),
@@ -858,6 +858,8 @@ public static class SettingsSchema
                 Number("freeDiskWarningGigabytes", "Warn Below Free Space (GB)", "Tell you when the disk is running out, while there is still time to do something about it. Saved clips for confirmed motion are never deleted automatically, so free space only goes one way unless you prune it. 0 turns the warning off.", 0, 10000),
                 Number("memoryWarningPercent", "Warn When Memory Is (%) Full", "Tell you, by push to the apps, email and Telegram, when the server's memory stays this full for a few minutes, with the programs using the most. If it runs out completely, the system starts killing programs - the camera AI, recordings, or this app. 0 turns the warning off.", 0, 100),
                 Number("processMemoryWarningPercent", "Warn When One Program Uses (%)", "The early warning: tell you when a single program grows past this share of the server's memory, naming it, usually hours before memory actually runs out. A program whose memory keeps creeping up (a leak) shows up here first. 0 turns the warning off.", 0, 100),
+                Number("aiSlowdownFactor", "Warn When The AI Is (x) Slower", "Tell you when the camera AI's last 5 snapshots took this many times longer than that model's normal for the week (by median, so one slow reload doesn't count). Alerts reach you that much later. 0 turns the warning off.", 0, 20, 0.5),
+                Number("aiTimeoutWarningPercent", "Warn When The AI Nears Its Time Limit (%)", "Tell you when one of the AI's last 5 snapshots took this share of the time Ollama is allowed per snapshot. Past the limit the analysis is abandoned and that alert fails. 0 turns the warning off.", 0, 100),
                 Check("notifyOnRecovery", "Notify On Recovery", "Also tell you when things go back to normal, not just when they break.")
             ]
         },

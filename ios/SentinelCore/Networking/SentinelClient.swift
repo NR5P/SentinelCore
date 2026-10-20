@@ -390,6 +390,10 @@ final class SentinelClient {
         try await get("/api/system/status")
     }
 
+    func aiSpeed() async throws -> AiSpeedReport {
+        try await get("/api/system/ai-speed")
+    }
+
     func registerPushDevice(token: String, deviceName: String) async throws {
         let _: EmptyResponse = try await send(
             "/api/push/devices",

@@ -114,6 +114,7 @@ import com.sentinelcore.android.data.SettingsLookupCandidate
 import com.sentinelcore.android.data.SettingsOptionsSource
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.SystemStatus
+import com.sentinelcore.android.data.AiSpeedReport
 import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.net.DiscoveredServer
 import com.sentinelcore.android.net.ServerDiscovery
@@ -212,6 +213,7 @@ data class SentinelUiState(
     val lastUpdated: Instant? = null,
     val pushStatus: PushStatus? = null,
     val systemStatus: SystemStatus? = null,
+    val aiSpeed: AiSpeedReport? = null,
     val pushPermission: String = "NOT REQUESTED",
     val pushRegistrationEnabled: Boolean = false,
     val pushMessage: String? = null,
@@ -1757,6 +1759,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { repository.systemStatus() }
                 .onSuccess { status -> _state.update { it.copy(systemStatus = status) } }
+        }
+        viewModelScope.launch {
+            runCatching { repository.aiSpeed() }
+                .onSuccess { speed -> _state.update { it.copy(aiSpeed = speed) } }
         }
     }
 
