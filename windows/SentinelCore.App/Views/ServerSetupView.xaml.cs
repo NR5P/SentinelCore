@@ -67,6 +67,12 @@ public partial class ServerSetupView : UserControl
 
     private void OnConnectClicked(object sender, RoutedEventArgs e) => Connect();
 
+    private void OnWebsiteLinkClicked(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        e.Handled = true;
+    }
+
     private void Connect()
     {
         if (_model is null) return;

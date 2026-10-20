@@ -164,6 +164,20 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Credits, as on the iPhone's Acknowledgements screen (AcknowledgementsView.swift). A TV
+            // can't open links, so the sites are named instead. TMDB's terms ask for its notice
+            // wherever its data is shown.
+            Section("About") {
+                LabeledContent("App Version", value: Self.appVersion)
+                Text("Movie and TV descriptions and artwork: The Movie Database (themoviedb.org). This product uses the TMDB API but is not endorsed or certified by TMDB.")
+                    .font(.caption)
+                Text("Weather, alerts, radar and lightning: National Weather Service / NOAA. Music details and cover art: MusicBrainz and Cover Art Archive; suggestions: ListenBrainz; lyrics: LRCLIB.")
+                    .font(.caption)
+                Text("Sentinel Core is an independent project, not affiliated with any camera, smart-home or media company named in the app. Privacy policy: nr5p.com/privacy")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Text("This Apple TV client manages its own connection and push registration. Camera setup, accounts, and recordings are managed from the iOS, macOS, or web dashboard.")
                     .font(.caption)
@@ -176,10 +190,13 @@ struct SettingsView: View {
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
     }
 
-    private func normalized(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
-        return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    private func normalized(_ value: String) -> String { ServerSetupView.normalizedAddress(value) }
+
+    private static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 }
 

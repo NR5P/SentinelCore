@@ -122,6 +122,7 @@ import com.sentinelcore.android.ui.screens.MOVIE_ADD_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOADS_ROUTE
 import com.sentinelcore.android.ui.screens.MEDIA_IMPORT_LIST_ROUTE
 import com.sentinelcore.android.ui.screens.MEDIA_IMPORT_ROUTE
+import com.sentinelcore.android.ui.screens.AcknowledgementsScreen
 import com.sentinelcore.android.ui.screens.MediaImportDetailScreen
 import com.sentinelcore.android.ui.screens.MediaImportScreen
 import com.sentinelcore.android.ui.screens.mediaImportListRoute
@@ -930,6 +931,7 @@ private fun SentinelNavHost(
                 onHomeKit = { navController.navigate("settings/homekit") },
                 onBackup = { navController.navigate("settings/backup") },
                 onLicense = { navController.navigate("settings/license") },
+                onAcknowledgements = { navController.navigate("settings/acknowledgements") },
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
                 onMediaLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) },
@@ -1142,6 +1144,10 @@ private fun SentinelNavHost(
                 model = model,
                 onBack = { navController.popBackStack() },
             )
+        }
+
+        composable("settings/acknowledgements") {
+            AcknowledgementsScreen(state = state, onBack = { navController.popBackStack() })
         }
 
         composable("settings/license") {

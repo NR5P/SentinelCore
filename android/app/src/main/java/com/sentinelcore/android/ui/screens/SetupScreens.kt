@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -57,9 +61,14 @@ fun ServerSetupScreen(
 ) {
     var address by rememberSaveable(initialAddress) { mutableStateOf(initialAddress) }
     val canConnect = address.isNotBlank()
+    val uriHandler = LocalUriHandler.current
 
     Box(
-        modifier = Modifier.fillMaxSize().background(SentinelBackground).padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(SentinelBackground)
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
         BrandedCard(Modifier.fillMaxWidth().widthIn(max = 560.dp)) {
@@ -75,7 +84,24 @@ fun ServerSetupScreen(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                 )
-                Text("Connect this device to the Sentinel Core server on your local network.")
+                // What someone who just found the app in a store needs before an address field
+                // means anything. The link is to the project's site (downloads and docs, no
+                // prices) - never a purchase.
+                Text("Welcome to Sentinel Core", color = SentinelGreen, fontWeight = FontWeight.Bold)
+                Text(
+                    "This app connects to Sentinel Core, a home hub that runs on a computer in your own " +
+                        "home: AI camera alerts, the family organizer, the alarm, movies, music and weather. " +
+                        "Your footage and data stay on that computer; this app is how you reach it.",
+                )
+                Text(
+                    "Don't have a server yet? Install it on a Linux PC first, then come back here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = { uriHandler.openUri("https://nr5p.com") }) {
+                    Text("Set up a server at nr5p.com", color = SentinelGreen)
+                }
+                Text("Connect to your server", color = SentinelGreen, fontWeight = FontWeight.Bold)
 
                 // An assist on top of manual entry below, which always stays visible - discovery
                 // can legitimately find nothing (client/AP isolation, a different VLAN, ...), and
@@ -125,7 +151,10 @@ fun ServerSetupScreen(
                     }
                 }
 
-                Text("Or enter the address manually:")
+                Text(
+                    "Or enter its address: the one on your home network, like http://192.168.1.50:3320, " +
+                        "or a web address such as https://home.example.com.",
+                )
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
@@ -140,11 +169,6 @@ fun ServerSetupScreen(
                     keyboardActions = KeyboardActions(
                         onGo = { if (canConnect) onConnect(address) },
                     ),
-                )
-                Text(
-                    "Your Android device and server must be on the same network.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
                     onClick = { onConnect(address) },

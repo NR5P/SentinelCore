@@ -2815,15 +2815,24 @@ class SentinelRepository(
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
 
     companion object {
-        // Local addresses default to http:// (a bare LAN IP shouldn't force a scheme nobody
-        // configured). The remote address defaults to https:// instead: it's meant to reach a
-        // public internet-facing hostname (e.g. a Cloudflare Tunnel), and silently falling back
-        // to plain HTTP there would send credentials/cookies over the internet in the clear.
-        fun normalizeAddress(value: String, defaultScheme: String = "http"): String {
+        // With no scheme typed, a home-network address (an IP, a .local name, a bare computer
+        // name) gets http://, which is how the dashboard ships; anything else is an internet
+        // address and gets https:// - typing "home.example.com" must never send a password across
+        // the internet in plain text. The remote address passes "https" to always get https://.
+        fun normalizeAddress(value: String, defaultScheme: String? = null): String {
             val trimmed = value.trim()
             if (trimmed.isBlank()) return ""
-            val withScheme = if ("://" in trimmed) trimmed else "$defaultScheme://$trimmed"
+            val scheme = defaultScheme ?: if (isHomeNetworkAddress(trimmed)) "http" else "https"
+            val withScheme = if ("://" in trimmed) trimmed else "$scheme://$trimmed"
             return withScheme.trimEnd('/')
+        }
+
+        fun isHomeNetworkAddress(typed: String): Boolean {
+            val host = runCatching { java.net.URI("x://$typed").host }.getOrNull()?.lowercase()?.trim('[', ']')
+            if (host.isNullOrEmpty()) return true
+            if (host == "localhost" || '.' !in host || ':' in host) return true
+            if (host.split('.').all { it.toIntOrNull() != null }) return true
+            return listOf(".local", ".lan", ".home", ".internal", ".home.arpa").any { host.endsWith(it) }
         }
 
         fun queryValue(value: String): String =

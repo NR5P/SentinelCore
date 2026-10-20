@@ -303,6 +303,12 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("About") {
+                LabeledContent("App Version", value: Self.appVersion)
+                NavigationLink("Acknowledgements") { AcknowledgementsView() }
+                Link("Privacy Policy", destination: URL(string: "https://nr5p.com/privacy")!)
+            }
+
             Section {
                 Text("This app manages its own connection and push registration. Server settings edited here and on the web dashboard are the same settings - a change in either place shows up in both.")
                     .font(.caption)
@@ -334,6 +340,13 @@ struct SettingsView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "\(defaultScheme)://\(trimmed)"
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    }
+
+    private static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {

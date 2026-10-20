@@ -72,6 +72,7 @@ fun SettingsScreen(
     onHomeKit: () -> Unit,
     onBackup: () -> Unit,
     onLicense: () -> Unit,
+    onAcknowledgements: () -> Unit = {},
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
     onMediaLibraries: () -> Unit = {},
@@ -415,8 +416,20 @@ fun SettingsScreen(
                     // Of those events, the ones nothing analyzed - motion the camera never
                     // forwarded for analysis, or whose forward was refused.
                     SettingsRow("Motion only", state.activity.count { !it.isAnalyzed && !it.isRecording }.toString())
-                    SettingsRow("App version", BuildConfig.VERSION_NAME)
                     state.lastError?.let { Text(it, color = SentinelRed) }
+                }
+            }
+
+            item {
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                SettingsSection("About") {
+                    SettingsRow("App version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                    TextButton(onClick = onAcknowledgements, modifier = Modifier.fillMaxWidth()) {
+                        Text("Acknowledgements", color = SentinelGreen, modifier = Modifier.weight(1f))
+                    }
+                    TextButton(onClick = { uriHandler.openUri("https://nr5p.com/privacy") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Privacy policy", color = SentinelGreen, modifier = Modifier.weight(1f))
+                    }
                 }
             }
 

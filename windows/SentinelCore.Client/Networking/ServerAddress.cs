@@ -31,18 +31,29 @@ public static class ServerAddress
     /// ("192.168.1.50:3320") gets the default scheme rather than being rejected.
     /// </summary>
     /// <remarks>
-    /// Local addresses default to http:// - a bare LAN IP shouldn't be forced into a scheme nobody
-    /// configured. The remote address defaults to https:// instead: it is meant to reach a public
-    /// internet-facing hostname (e.g. a Cloudflare Tunnel), and silently falling back to plain HTTP
-    /// there would send credentials and cookies over the internet in the clear.
+    /// With no scheme passed, a home-network address (an IP, a .local name, a bare computer name)
+    /// gets http://, which is how the dashboard ships; anything else is an internet address and
+    /// gets https:// - typing "home.example.com" must never send a password across the internet in
+    /// plain text. The remote address passes "https" to always get https://. Same rule as the
+    /// iPhone, Apple TV and Android setup screens.
     /// </remarks>
-    public static string AddSchemeIfMissing(string raw, string defaultScheme = "http")
+    public static string AddSchemeIfMissing(string raw, string? defaultScheme = null)
     {
         var trimmed = (raw ?? "").Trim();
+        var scheme = defaultScheme ?? (IsHomeNetworkAddress(trimmed) ? "http" : "https");
         var withScheme = trimmed.Contains("://", StringComparison.Ordinal)
             ? trimmed
-            : $"{defaultScheme}://{trimmed}";
+            : $"{scheme}://{trimmed}";
         return withScheme.TrimEnd('/');
+    }
+
+    public static bool IsHomeNetworkAddress(string typed)
+    {
+        if (!Uri.TryCreate($"http://{typed}", UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host)) return true;
+        var host = uri.Host.Trim('[', ']').ToLowerInvariant();
+        if (host == "localhost" || !host.Contains('.') || host.Contains(':')) return true;
+        if (host.Split('.').All(part => int.TryParse(part, out _))) return true;
+        return new[] { ".local", ".lan", ".home", ".internal", ".home.arpa" }.Any(host.EndsWith);
     }
 
     /// <summary>

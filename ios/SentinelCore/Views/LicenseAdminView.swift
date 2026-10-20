@@ -34,7 +34,9 @@ struct LicenseAdminView: View {
             } header: {
                 Text("License")
             } footer: {
-                Text("Installs the licence file you were emailed after purchase. Missing or invalid shows a notice and a watermark, and nothing else — every feature keeps working either way, so this is never urgent.")
+                // No purchase wording: App Review reads any mention of buying outside the app as a call to
+                // action (guideline 3.1.1). This only says what the file does.
+                Text("Installs this server's license file (license.lic). Without one, camera images carry a watermark and nothing else changes — every feature keeps working, so this is never urgent.")
             }
 
             Section {

@@ -3,12 +3,26 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{StaticResource WindowBackground}">
 
-    <Grid>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="520" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,22">
                 <TextBlock Text="&gt;_" Style="{StaticResource Wordmark}" FontSize="20" Margin="0,0,10,0" />
                 <TextBlock Text="SENTINEL_CORE" Style="{StaticResource Wordmark}" FontSize="20" />
             </StackPanel>
+
+            <!-- What someone new needs before an address field means anything: what the app is for,
+                 that it talks to a server in their own home, and where that server comes from. -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Welcome to Sentinel Core" Style="{StaticResource GroupHeading}" />
+                    <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="This app connects to Sentinel Core, a home hub that runs on a computer in your own home: AI camera alerts, the family organizer, the alarm, movies, music and weather. Your footage and data stay on that computer; this app is how you reach it." />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap">
+                        <Run Text="Don't have a server yet? Install it on a Linux PC first, then come back here: " />
+                        <Hyperlink NavigateUri="https://nr5p.com" RequestNavigate="OnWebsiteLinkClicked">nr5p.com</Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
 
             <Border Style="{StaticResource Card}">
                 <StackPanel>
@@ -51,7 +65,8 @@
                     </StackPanel>
 
                     <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
-                               Text="Or enter the local-network address of the Sentinel Core dashboard." />
+                               TextWrapping="Wrap"
+                               Text="Or enter its address: the one on your home network, or a web address such as https://home.example.com." />
                     <TextBox x:Name="AddressBox" KeyDown="OnAddressKeyDown" />
                     <TextBlock Style="{StaticResource Caption}" Margin="2,5,0,0"
                                Text="For example: http://192.168.1.50:3320" />
@@ -64,5 +79,5 @@
             <TextBlock x:Name="ErrorText" Style="{StaticResource Caption}" Foreground="{StaticResource Red}"
                        Margin="4,12,0,0" Visibility="Collapsed" />
         </StackPanel>
-    </Grid>
+    </ScrollViewer>
 </UserControl>

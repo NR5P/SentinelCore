@@ -198,21 +198,30 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
   Cloudflare Zero Trust → the tunnel → Published application routes, change the existing
   `nr5p.com` route's service from `http://127.0.0.1` to **HTTP `127.0.0.1:3330`** (same target
   as `push.nr5p.com`). Nothing served the bare domain before, so nothing is displaced.
-- **A server reviewers can log in to.** Deferred (2026-09-20): testers install Core themselves
-  before installing the app, so internal TestFlight / Play internal need nothing here. Be aware
-  that *App Review* staff won't install Core - for external TestFlight or a public listing,
-  expect "we were unable to sign in" unless a demo server and login are in the review notes.
-  When that day comes: a second, *licensed* Core with the demo data (`video/demo/`) behind a
-  `demo.nr5p.com` tunnel route, plus a Viewer account.
+- **A server reviewers can log in to: https://demo.nr5p.com (live since 2026-10-20).** A second,
+  walled-off Core on the media box with invented cameras, events, movies, music, organizer items
+  and files, rebuilt every night; see [`core/demo/README.md`](../core/demo/README.md). Reviewers
+  sign in as the Viewer `appreview`; the password is on the box only
+  (`sudo core/demo/demo.sh login`). Put it in App Store Connect → App Review Information
+  (Sign-in required) and Play Console → App content → App access.
 - **Review notes text (App Store Connect → TestFlight → Test Information, and again on the
   App Store version):**
 
-  > Sentinel Core is a client for a camera-alert server the user runs on their own computer
-  > (the server is a separate download; testers install it first). [When a demo server exists:
-  > A demo server is available at https://demo.nr5p.com - sign in with the credentials
-  > provided.] The app uses NSAllowsArbitraryLoads because the user configures their own
-  > server address, which on a home network is commonly plain HTTP. Accounts are created and
-  > deleted by the server's administrator inside the app (Settings → Manage Accounts).
+  > Sentinel Core is the client for a home server the user runs on their own computer (a separate
+  > download from nr5p.com). For review, a demo server is running: on the first screen enter
+  > https://demo.nr5p.com, tap Connect, and sign in with the username and password provided. The
+  > cameras, events, movies and music on it are generated demo content. The app uses
+  > NSAllowsArbitraryLoads because each user types their own server's address, which on a home
+  > network is commonly plain HTTP to an IP address or a local or dynamic-DNS hostname that ATS
+  > exceptions cannot list in advance. Accounts are created and deleted by the server's
+  > administrator (Settings → Manage Accounts); the app itself creates no accounts.
+- **Why NSAllowsArbitraryLoads stays (decided 2026-10-20).** `NSAllowsLocalNetworking` alone
+  would break servers reached over plain HTTP by a dynamic-DNS or other dotted hostname, and
+  AVPlayer streams from them, with no way to name those hosts in Info.plist. Home Assistant,
+  Jellyfin and Plex-style companion apps ship the same exception with the same justification.
+  What keeps it safe is the app: the setup screens add `https://` to any internet address typed
+  without a scheme (only IPs, `.local` and bare names get `http://`), and the plain-HTTP fallback
+  only carries a session to a server that already proved its identity over TLS.
 - **App privacy label (Apple) / Data safety (Google):** no data collected by the developer; the
   app sends the device's push token and login to the user's own server; no tracking; no
   third-party SDKs that collect data (Firebase Messaging is delivery only). Things a reviewer may

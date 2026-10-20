@@ -122,9 +122,11 @@ fun LicenseAdminScreen(
                         )
                         customerName?.let { Text("Licensed to $it", style = MaterialTheme.typography.bodyMedium) }
                         Text(
-                            "Installs the licence file you were emailed after purchase. Missing or invalid " +
-                                "shows a notice and a watermark, and nothing else — every feature keeps working " +
-                                "either way, so this is never urgent.",
+                            // No purchase wording: store review reads any mention of buying outside the
+                            // app as a call to action. This only says what the file does.
+                            "Installs this server's license file (license.lic). Without one, camera images " +
+                                "carry a watermark and nothing else changes — every feature keeps working, " +
+                                "so this is never urgent.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

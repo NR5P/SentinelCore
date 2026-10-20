@@ -34,6 +34,21 @@ public class ServerAddressTests
     public void AddSchemeIfMissing_only_fills_in_what_is_missing(string input, string scheme, string expected) =>
         Assert.Equal(expected, ServerAddress.AddSchemeIfMissing(input, scheme));
 
+    // No scheme passed: home-network addresses keep http://, internet ones get https://, so a
+    // password typed for "demo.nr5p.com" never crosses the internet in plain text.
+    [Theory]
+    [InlineData("192.168.1.50:3320", "http://192.168.1.50:3320")]
+    [InlineData("sentinel.local:3320", "http://sentinel.local:3320")]
+    [InlineData("mediabox:3320", "http://mediabox:3320")]
+    [InlineData("localhost:3320", "http://localhost:3320")]
+    [InlineData("[fe80::1]:3320", "http://[fe80::1]:3320")]
+    [InlineData("nas.home.arpa", "http://nas.home.arpa")]
+    [InlineData("demo.nr5p.com", "https://demo.nr5p.com")]
+    [InlineData("home.example.com:8443/", "https://home.example.com:8443")]
+    [InlineData("http://demo.nr5p.com", "http://demo.nr5p.com")]
+    public void AddSchemeIfMissing_picks_https_for_internet_addresses(string input, string expected) =>
+        Assert.Equal(expected, ServerAddress.AddSchemeIfMissing(input));
+
     [Fact]
     public void HttpFallback_points_at_the_shipped_plain_http_port()
     {
