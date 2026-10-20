@@ -34,7 +34,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 }
 
 @MainActor
-final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarTemplateDelegate {
+final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarTemplateDelegate, CPInterfaceControllerDelegate {
     static let shared = CarPlayController()
 
     static var controlsEnabled: Bool {
@@ -61,6 +61,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     func connect(_ interface: CPInterfaceController) {
         model.log("CarPlay connected (\(model.connectionState.label))")
         pollTask?.cancel()
+        pollTask = nil
         self.interface = interface
         musicTab = CPListTemplate(title: "Music", sections: [])
         podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
@@ -78,9 +79,28 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         if Self.controlsEnabled { tabs += [homeTab, alertsTab] }
         let root = CPTabBarTemplate(templates: tabs)
         root.delegate = self
-        interface.setRootTemplate(root, animated: false, completion: nil)
+        tabBar = root
+        interface.delegate = self
         configureNowPlaying()
+        // Loading starts once the car has the tabs on screen. Sections set on the visible tab
+        // before then were dropped: the first tab sat on "Loading" until another was picked.
+        interface.setRootTemplate(root, animated: false) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                if self?.pollTask == nil { self?.startPolling() }
+            }
+        }
+        // Should the car never confirm, load anyway rather than show "Loading" for good.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, self.interface === interface, self.pollTask == nil else { return }
+            self.startPolling()
+        }
+    }
 
+    private var tabBar: CPTabBarTemplate?
+
+    private func startPolling() {
+        pollTask?.cancel()
         pollTask = Task { [weak self] in
             // Until connected, retried every 15 seconds - the car often comes up before the
             // phone has signal. Once connected, Music and Podcasts load once (re-read when their
@@ -99,6 +119,10 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                     async let podcasts: Void = self.loadPodcasts()
                     _ = await (music, podcasts)
                     audioLoaded = true
+                    // Belt and braces for the same dropped first draw: hand the tab on screen
+                    // its sections again a moment later, so nobody has to tap to see them.
+                    try? await Task.sleep(for: .seconds(1))
+                    self.redrawVisibleTab()
                 }
                 guard Self.controlsEnabled else { return }
                 // Alerts in a task of its own, so a slow Home can never hold it back.
@@ -106,6 +130,25 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                 await self.loadHome()
                 tick += 1
                 try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func redrawVisibleTab() {
+        guard let visible = tabBar?.selectedTemplate as? CPListTemplate else { return }
+        visible.updateSections(visible.sections)
+    }
+
+    // A tab coming on screen (the first one included, which no tab pick reports) is re-read.
+    nonisolated func templateDidAppear(_ aTemplate: CPTemplate, animated: Bool) {
+        MainActor.assumeIsolated {
+            let shown = (aTemplate as? CPTabBarTemplate)?.selectedTemplate ?? aTemplate
+            guard pollTask != nil else { return }
+            Task {
+                if shown === musicTab { await loadMusic() }
+                else if shown === podcastsTab { await loadPodcasts() }
+                else if shown === homeTab { await loadHome() }
+                else if shown === alertsTab { await loadAlerts() }
             }
         }
     }
