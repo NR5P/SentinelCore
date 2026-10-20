@@ -88,6 +88,9 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         // before then were dropped: the first tab sat on "Loading" until another was picked.
         interface.setRootTemplate(root, animated: false) { [weak self] _, _ in
             MainActor.assumeIsolated {
+                // CarPlay comes up with no tab selected at all - Music's list is drawn but isn't
+                // the current tab, so it never refreshed until a tab was tapped. Pick Music.
+                self?.selectMusicTab()
                 if self?.pollTask == nil { self?.startPolling() }
             }
         }
@@ -95,11 +98,17 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self, self.interface === interface, self.pollTask == nil else { return }
+            self.selectMusicTab()
             self.startPolling()
         }
     }
 
     private var tabBar: CPTabBarTemplate?
+
+    private func selectMusicTab() {
+        guard let tabBar, tabBar.selectedTemplate !== musicTab else { return }
+        tabBar.select(musicTab)
+    }
 
     private func startPolling() {
         pollTask?.cancel()
