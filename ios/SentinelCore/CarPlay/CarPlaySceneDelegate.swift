@@ -67,6 +67,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
         homeTab = CPListTemplate(title: "Home", sections: [])
         homeLogged = false
+        alertsLoaded = false
         alertsTab = CPListTemplate(title: "Alerts", sections: [])
         musicTab.tabImage = UIImage(systemName: "music.note")
         podcastsTab.tabImage = UIImage(systemName: "mic")
@@ -74,6 +75,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         alertsTab.tabImage = UIImage(systemName: "bell")
         for tab in allTabs {
             tab.emptyViewTitleVariants = ["Loading\u{2026}"]
+            show([], on: tab)
         }
         var tabs = [musicTab, podcastsTab]
         if Self.controlsEnabled { tabs += [homeTab, alertsTab] }
@@ -119,10 +121,9 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                     async let podcasts: Void = self.loadPodcasts()
                     _ = await (music, podcasts)
                     audioLoaded = true
-                    // Belt and braces for the same dropped first draw: hand the tab on screen
-                    // its sections again a moment later, so nobody has to tap to see them.
-                    try? await Task.sleep(for: .seconds(1))
-                    self.redrawVisibleTab()
+                    // And once more a moment later, after the car has finished drawing.
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    await self.reloadVisibleTab()
                 }
                 guard Self.controlsEnabled else { return }
                 // Alerts in a task of its own, so a slow Home can never hold it back.
@@ -134,9 +135,26 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         }
     }
 
-    private func redrawVisibleTab() {
-        guard let visible = tabBar?.selectedTemplate as? CPListTemplate else { return }
-        visible.updateSections(visible.sections)
+    // Every tab update goes through here, and a tab is never left with no rows: "Loading" and
+    // the other notices are a row of their own, not the empty-list text. CarPlay doesn't always
+    // swap the empty-list text for rows on the first tab it draws - Music sat on "Loading" at
+    // startup until another tab was tapped - while rows replacing rows always shows.
+    private func show(_ sections: [CPListSection], on tab: CPListTemplate) {
+        if sections.isEmpty {
+            let notice = CPListItem(text: tab.emptyViewTitleVariants.first ?? "", detailText: nil)
+            tab.updateSections([CPListSection(items: [notice])])
+        } else {
+            tab.updateSections(sections)
+        }
+    }
+
+    // Re-reads the tab on screen with fresh rows - what tapping a tab does, which always worked.
+    private func reloadVisibleTab() async {
+        guard let shown = tabBar?.selectedTemplate else { return }
+        if shown === musicTab { await loadMusic() }
+        else if shown === podcastsTab { await loadPodcasts() }
+        else if shown === homeTab { await loadHome() }
+        else if shown === alertsTab { await loadAlerts() }
     }
 
     // A tab coming on screen (the first one included, which no tab pick reports) is re-read.
@@ -203,7 +221,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     private func showMessage(_ text: String) {
         for tab in allTabs {
             tab.emptyViewTitleVariants = [text]
-            tab.updateSections([])
+            show([], on: tab)
         }
     }
 
@@ -215,7 +233,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         let enabled = (try? await client.audioEnabled())?.music ?? model.musicEnabled
         guard enabled else {
             musicTab.emptyViewTitleVariants = ["Music is turned off on your server."]
-            musicTab.updateSections([])
+            show([], on: musicTab)
             return
         }
         let home: MusicHome?
@@ -251,7 +269,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
             },
         ]
         sections.append(CPListSection(items: browse, header: "Library", sectionIndexTitle: nil))
-        musicTab.updateSections(sections)
+        show(sections, on: musicTab)
         model.log("CarPlay: Music loaded (\(sections.count) sections)")
         if home == nil { musicTab.emptyViewTitleVariants = ["Can't reach your Sentinel Core server."] }
     }
@@ -370,7 +388,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         let enabled = (try? await client.audioEnabled())?.podcasts ?? model.podcastsEnabled
         guard enabled else {
             podcastsTab.emptyViewTitleVariants = ["Podcasts are turned off on your server."]
-            podcastsTab.updateSections([])
+            show([], on: podcastsTab)
             return
         }
         let loaded: PodcastHome?
@@ -380,7 +398,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         }
         guard let home = loaded else {
             podcastsTab.emptyViewTitleVariants = ["Can't reach your Sentinel Core server."]
-            podcastsTab.updateSections([])
+            show([], on: podcastsTab)
             return
         }
         var sections: [CPListSection] = []
@@ -405,7 +423,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
             sections.append(CPListSection(items: shows.prefix(listLimit).map(showItem), header: "Shows", sectionIndexTitle: nil))
         }
         podcastsTab.emptyViewTitleVariants = ["No podcasts yet. Subscribe on your phone."]
-        podcastsTab.updateSections(sections)
+        show(sections, on: podcastsTab)
     }
 
     private func showItem(_ show: Podcast) -> CPListItem {
@@ -561,7 +579,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         sections = Array(sections.prefix(max(1, CPListTemplate.maximumSectionCount)))
         let failed = alarm == nil && hub == nil && devices == nil && schedules == nil
         homeTab.emptyViewTitleVariants = [failed ? "Can't reach your Sentinel Core server." : "No alarm or devices are set up."]
-        homeTab.updateSections(sections)
+        show(sections, on: homeTab)
         if !homeLogged {
             homeLogged = true
             let rows = sections.reduce(0) { $0 + $1.items.count }
@@ -569,6 +587,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         }
     }
     private var homeLogged = false
+    private var alertsLoaded = false
 
     // nil when the read failed or took longer than 8 seconds; either is logged.
     private func timed<T: Sendable>(_ what: String, _ read: @escaping @Sendable () async throws -> T) async -> T? {
@@ -723,9 +742,9 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     private func loadAlerts() async {
         guard let activity = await timed("alerts", { [client] in try await client.activity(notifiedOnly: true) }) else {
             // Left as it was if alerts have shown before; never left on "Loading".
-            if alertsTab.sections.isEmpty {
+            if !alertsLoaded {
                 alertsTab.emptyViewTitleVariants = ["Couldn't load recent alerts."]
-                alertsTab.updateSections([])
+                show([], on: alertsTab)
             }
             return
         }
@@ -739,8 +758,9 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
             let detail = [event.summary.map { String($0.prefix(100)) }, when].compactMap { $0 }.joined(separator: " · ")
             return CPListItem(text: title, detailText: detail)
         }
+        alertsLoaded = true
         alertsTab.emptyViewTitleVariants = ["No recent alerts."]
-        alertsTab.updateSections(rows.isEmpty ? [] : [CPListSection(items: Array(rows))])
+        show(rows.isEmpty ? [] : [CPListSection(items: Array(rows))], on: alertsTab)
     }
 
     // MARK: - Building blocks
