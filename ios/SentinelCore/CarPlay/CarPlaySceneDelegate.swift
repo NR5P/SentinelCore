@@ -65,6 +65,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         musicTab = CPListTemplate(title: "Music", sections: [])
         podcastsTab = CPListTemplate(title: "Podcasts", sections: [])
         homeTab = CPListTemplate(title: "Home", sections: [])
+        homeLogged = false
         alertsTab = CPListTemplate(title: "Alerts", sections: [])
         musicTab.tabImage = UIImage(systemName: "music.note")
         podcastsTab.tabImage = UIImage(systemName: "mic")
@@ -100,8 +101,9 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                     audioLoaded = true
                 }
                 guard Self.controlsEnabled else { return }
+                // Alerts in a task of its own, so a slow Home can never hold it back.
+                if tick % 6 == 0 { Task { await self.loadAlerts() } }
                 await self.loadHome()
-                if tick % 6 == 0 { await self.loadAlerts() }
                 tick += 1
                 try? await Task.sleep(for: .seconds(5))
             }
@@ -116,9 +118,14 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     }
 
     func tabBarTemplate(_ tabBarTemplate: CPTabBarTemplate, didSelect selectedTemplate: CPTemplate) {
-        guard selectedTemplate === musicTab || selectedTemplate === podcastsTab else { return }
-        // A cheap re-read so "Up next" and "Recently played" follow what was played on the phone.
-        Task { selectedTemplate === musicTab ? await loadMusic() : await loadPodcasts() }
+        // A cheap re-read so "Up next" and "Recently played" follow what was played on the phone,
+        // and Home and Alerts are current the moment they're looked at.
+        Task {
+            if selectedTemplate === musicTab { await loadMusic() }
+            else if selectedTemplate === podcastsTab { await loadPodcasts() }
+            else if selectedTemplate === homeTab { await loadHome() }
+            else if selectedTemplate === alertsTab { await loadAlerts() }
+        }
     }
 
     // MARK: - Connection
@@ -455,30 +462,74 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
 
     // MARK: - Home (driving task)
 
+    // The four reads side by side, each cut off after 8 seconds (the client's own timeout is 60),
+    // so one slow answer can't leave the tab on "Loading". Whatever came back is shown.
     private func loadHome() async {
-        var sections: [CPListSection] = []
+        let started = ContinuousClock.now
+        let alarmOn = model.alarmEnabled
+        async let alarmRead = timed("alarm") { [client] in
+            alarmOn ? try await client.alarmStatus() : nil
+        }
+        async let hubRead = timed("device hub") { [client] in try await client.deviceHubEnabled().enabled }
+        async let devicesRead = timed("devices") { [client] in try await client.devices() }
+        async let scenesRead = timed("scenes") { [client] in try await client.schedules() }
+        let (alarm, hub, devices, schedules) = await (alarmRead, hubRead, devicesRead, scenesRead)
 
-        if model.alarmEnabled, let alarm = try? await client.alarmStatus(), alarm.enabled {
+        var sections: [CPListSection] = []
+        if let alarm = alarm ?? nil, alarm.enabled {
             sections.append(CPListSection(items: alarmItems(alarm), header: "Alarm", sectionIndexTitle: nil))
         }
-
-        let hubOn = (try? await client.deviceHubEnabled())?.enabled ?? false
-        if hubOn, let devices = try? await client.devices() {
+        let hubOn = hub ?? false
+        if hubOn, let devices {
+            // Every enabled Device Hub (MQTT) device that takes commands.
             let shown = devices.filter { $0.enabled && $0.commandable }
                 .sorted { ($0.sortOrder ?? 0, $0.room, $0.name) < ($1.sortOrder ?? 0, $1.room, $1.name) }
             if !shown.isEmpty {
                 sections.append(CPListSection(items: shown.prefix(listLimit).map(deviceItem), header: "Devices", sectionIndexTitle: nil))
             }
         }
-        if hubOn, let schedules = try? await client.schedules() {
+        if hubOn, let schedules {
             let scenes = schedules.filter { $0.enabled && ["device", "mqtt", "webhook"].contains($0.action.type) }
                 .sorted { $0.name < $1.name }
             if !scenes.isEmpty {
                 sections.append(CPListSection(items: scenes.prefix(listLimit).map(sceneItem), header: "Scenes", sectionIndexTitle: nil))
             }
         }
-        homeTab.emptyViewTitleVariants = ["No alarm or devices are set up."]
+        sections = Array(sections.prefix(max(1, CPListTemplate.maximumSectionCount)))
+        let failed = alarm == nil && hub == nil && devices == nil && schedules == nil
+        homeTab.emptyViewTitleVariants = [failed ? "Can't reach your Sentinel Core server." : "No alarm or devices are set up."]
         homeTab.updateSections(sections)
+        if !homeLogged {
+            homeLogged = true
+            let rows = sections.reduce(0) { $0 + $1.items.count }
+            model.log("CarPlay: Home loaded in \(started.duration(to: .now).formatted(.units(allowed: [.seconds, .milliseconds], width: .abbreviated))) - \(sections.count) sections, \(rows) rows (hub \(hub.map { $0 ? "on" : "off" } ?? "unknown"), \(devices?.count.description ?? "no") devices)")
+        }
+    }
+    private var homeLogged = false
+
+    // nil when the read failed or took longer than 8 seconds; either is logged.
+    private func timed<T: Sendable>(_ what: String, _ read: @escaping @Sendable () async throws -> T) async -> T? {
+        await withTaskGroup(of: Result<T, Error>?.self) { group in
+            group.addTask {
+                do { return .success(try await read()) } catch { return .failure(error) }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(8))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            switch first {
+            case .success(let value)?:
+                return value
+            case .failure(let error)?:
+                model.log("CarPlay: \(what) couldn't load: \(error.localizedDescription)", level: .error)
+                return nil
+            case nil:
+                model.log("CarPlay: \(what) took longer than 8s", level: .error)
+                return nil
+            }
+        }
     }
 
     private func alarmItems(_ alarm: AlarmStatus) -> [CPListItem] {
@@ -607,7 +658,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     // MARK: - Alerts (driving task)
 
     private func loadAlerts() async {
-        guard let activity = try? await client.activity(notifiedOnly: true) else {
+        guard let activity = await timed("alerts", { [client] in try await client.activity(notifiedOnly: true) }) else {
             // Left as it was if alerts have shown before; never left on "Loading".
             if alertsTab.sections.isEmpty {
                 alertsTab.emptyViewTitleVariants = ["Couldn't load recent alerts."]
