@@ -54,7 +54,7 @@ extension SentinelClient {
         if body != nil, let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         if let timeout { request.timeoutInterval = timeout }
         do {
-            let (data, response) = try await organizerSession.data(for: request)
+            let (data, response) = try await withAddressRecovery(request) { try await self.organizerSession.data(for: $0) }
             do {
                 return try validated(data, response)
             } catch {

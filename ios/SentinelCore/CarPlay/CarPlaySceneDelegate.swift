@@ -204,7 +204,11 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
     // connected yet. The wait is bounded: connect() loads the whole app (events, cameras, push),
     // each request with a 60-second timeout, and the car shouldn't sit on "Loading" through that.
     private func ready() async -> Bool {
-        if model.connectionState == .online { return true }
+        // `.online` is what connect() found, maybe at home before the drive started. Every request
+        // re-picks the address when the home one stops answering (SentinelClient.withAddressRecovery),
+        // but a screen showing stale rows sends nothing - so the address is looked at again here
+        // every 30 seconds, falling through to a reconnect when nothing answers.
+        if model.connectionState == .online, await model.confirmAddress() { return true }
         guard model.isConfigured else {
             showMessage("Sentinel Core isn't set up yet. When it's safe, open it on your iPhone.")
             return false

@@ -1227,7 +1227,7 @@ final class SentinelClient {
         if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         if let timeout { request.timeoutInterval = timeout }
         do {
-            let (data, response) = try await organizerSession.data(for: request)
+            let (data, response) = try await withAddressRecovery(request) { try await self.organizerSession.data(for: $0) }
             return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
         } catch {
             if (error as? URLError)?.code != .cancelled, path != "/api/organizer/wait" {
@@ -1325,7 +1325,7 @@ final class SentinelClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await withAddressRecovery(request) { try await self.session.data(for: $0) }
         } catch {
             model.log("\(method) failed after \(elapsed(from: started)): \(describe(error))", level: .error)
             throw error
@@ -1385,19 +1385,50 @@ final class SentinelClient {
     // per-request timeout override (rather than a whole separate URLSessionConfiguration) keeps
     // this from disturbing the session's normal 10s/15s timeouts used for everything else.
     func probeReachable(_ urlString: String, timeout: TimeInterval = 2.5) async -> Bool {
+        await probe(urlString, timeout: timeout) != .unreachable
+    }
+
+    // probeReachable, telling an untrusted certificate apart from a plain answer - the address
+    // recovery needs to know whether the local server wants the plain-HTTP fallback.
+    func probe(_ urlString: String, timeout: TimeInterval = 2.5) async -> AddressRecovery.Probe {
         guard let url = URL(string: "\(urlString.trimmingCharacters(in: .whitespacesAndNewlines))/api/auth/status") else {
-            return false
+            return .unreachable
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         do {
             _ = try await session.data(for: request)
-            return true
+            return .answered
         } catch {
             // A rejected certificate still proves a server answered - it takes a completed-enough
             // TLS handshake to have a certificate to reject. Treating it as unreachable here would
             // wrongly send connect() to the remote address when the local server is fine.
-            return AppModel.isCertificateTrustFailure(error)
+            if AppModel.isUntrustedCertificate(error) { return .untrustedCertificate }
+            return AppModel.isCertificateTrustFailure(error) ? .answered : .unreachable
+        }
+    }
+
+    // Runs a request against the current address; when it fails the way a vanished address does
+    // (the phone left home Wi-Fi), has the model re-pick between the local and remote address and,
+    // if that moved somewhere that answers, sends the request once more there. The retry is only
+    // for failures that provably never reached the server, or for reads - see AddressRecovery - so
+    // a command can't run twice. Anything else comes back exactly as it failed.
+    func withAddressRecovery<T>(
+        _ request: URLRequest, _ run: (URLRequest) async throws -> T
+    ) async throws -> T {
+        do {
+            return try await run(request)
+        } catch {
+            guard AddressRecovery.shouldRecheckAddress(error), !Task.isCancelled,
+                  let failedOrigin = AddressRecovery.origin(of: request.url),
+                  await model.recoverAddress(after: failedOrigin),
+                  AddressRecovery.mayRetry(error, method: request.httpMethod ?? "GET"),
+                  let retry = AddressRecovery.rebase(request, onto: model.activeServerURL),
+                  AddressRecovery.origin(of: retry.url) != failedOrigin else {
+                throw error
+            }
+            model.log("Sending \(request.httpMethod ?? "GET") \(retry.url?.path ?? "") again at \(model.activeServerURL)", level: .notice)
+            return try await run(retry)
         }
     }
 

@@ -133,6 +133,13 @@ final class AppModel: ObservableObject {
     #endif
     private var localNetworkBrowser: NWBrowser?
     private(set) var isConnecting = false
+    // One address re-pick at a time - a CarPlay screen fires several requests at once, and they
+    // all fail together when the phone leaves home. See recoverAddress.
+    private var addressRecovery: Task<Bool, Never>?
+    private var lastAddressCheck: ContinuousClock.Instant?
+    // Wi-Fi <-> cellular: the cue to check the address before a request has to fail first.
+    private let pathMonitor = NWPathMonitor()
+    private var lastPathSignature: String?
     private var pendingPushEventId: UUID?
     private var observers: [NSObjectProtocol] = []
 
@@ -180,6 +187,7 @@ final class AppModel: ObservableObject {
             Task { await openPushEvent(id) }
         }
         Task { await refreshPushAuthorization() }
+        startPathMonitor()
         organizer.onAlertsChanged = { alerts in OrganizerNotifications.schedule(alerts) }
         #if os(iOS)
         organizerWidgets = OrganizerWidgetBridge(engine: organizer, enabled: organizerLastKnownEnabled)
@@ -296,6 +304,7 @@ final class AppModel: ObservableObject {
         usingHttpFallback = false
         httpFallbackVerified = false
         await resolveActiveServerURL()
+        lastAddressCheck = .now
         do {
             try await establishSession()
         } catch {
@@ -540,6 +549,105 @@ final class AppModel: ObservableObject {
             log("Local address \(serverURL) unreachable; using remote address \(remoteServerURL)", level: .notice)
             activeServerURL = remoteServerURL
             isUsingRemote = true
+        }
+    }
+
+    // The address this session is using stopped answering (a request failed before reaching the
+    // server; see SentinelClient.withAddressRecovery). If the current address still answers, keep
+    // it - the failure was something else. Otherwise re-pick exactly as connect() does: local if it
+    // answers (through the plain-HTTP fallback only for a server that has proved who it is), else
+    // remote. True when activeServerURL now points somewhere other than `failedOrigin` that
+    // answered, so the caller may send its request again. Callers that pile up behind one
+    // re-pick share its answer.
+    func recoverAddress(after failedOrigin: String) async -> Bool {
+        // Someone else already moved off the address that failed.
+        if let current = AddressRecovery.origin(of: activeServerURL), current != failedOrigin { return true }
+        // connect() is choosing right now; let it.
+        guard isConfigured, !isConnecting else { return false }
+        if let running = addressRecovery { return await running.value }
+        let task = Task { await self.repickAddress() }
+        addressRecovery = task
+        let moved = await task.value
+        addressRecovery = nil
+        return moved
+    }
+
+    private func repickAddress() async -> Bool {
+        lastAddressCheck = .now
+        let current = activeServerURL
+        if !current.isEmpty, await client.probe(current) != .unreachable { return false }
+        let choice = await AddressRecovery.choose(
+            local: serverURL,
+            remote: hasRemoteServerURL ? remoteServerURL : nil,
+            probe: { await self.client.probe($0) },
+            fallback: { local in
+                // Same gate as the background refresh: no first-use exception without someone
+                // looking, so only a server whose authority is already remembered.
+                guard let http = Self.httpFallbackAddress(for: local),
+                      case .verified = await ServerIdentity.check(local),
+                      await self.client.probeReachable(http) else { return nil }
+                return http
+            })
+        guard let choice else {
+            log("Server address \(current) stopped answering and neither the local nor the remote address answers", level: .notice)
+            return false
+        }
+        guard AddressRecovery.origin(of: choice.address) != AddressRecovery.origin(of: current) else { return false }
+        log("Server address \(current) stopped answering; using \(choice.isRemote ? "remote" : "local") address \(choice.address)", level: .notice)
+        activeServerURL = choice.address
+        isUsingRemote = choice.isRemote
+        usingHttpFallback = choice.isHttpFallback
+        httpFallbackVerified = choice.isHttpFallback
+        return true
+    }
+
+    // For callers that act on `.online` without sending anything first (CarPlay's ready()): checks
+    // the address still answers when it hasn't been looked at for `maxAge`, re-picking if not.
+    // False when nothing answers - the app is then offline, and says so.
+    func confirmAddress(maxAge: Duration = .seconds(30)) async -> Bool {
+        guard connectionState == .online, !isConnecting else { return connectionState == .online }
+        if let lastAddressCheck, lastAddressCheck.duration(to: .now) < maxAge { return true }
+        guard let origin = AddressRecovery.origin(of: activeServerURL) else { return false }
+        lastAddressCheck = .now
+        if await client.probe(activeServerURL) != .unreachable { return true }
+        if await recoverAddress(after: origin) { return true }
+        if connectionState == .online {
+            connectionState = .offline
+            lastError = "Can't reach your Sentinel Core server."
+        }
+        return false
+    }
+
+    // Moving between networks changes which address can answer. The first update is just the path
+    // at launch; after that, a different set of interfaces while online re-checks the address, and
+    // a network coming back while offline reconnects.
+    private func startPathMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let signature = path.status == .satisfied
+                ? path.availableInterfaces.map { "\($0.type)" }.sorted().joined(separator: ",")
+                : "none"
+            Task { @MainActor in self?.networkPathChanged(signature: signature, satisfied: path.status == .satisfied) }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "SentinelCore.path"))
+    }
+
+    private func networkPathChanged(signature: String, satisfied: Bool) {
+        defer { lastPathSignature = signature }
+        guard let previous = lastPathSignature, previous != signature, satisfied, isConfigured, !isConnecting else { return }
+        log("Network changed (\(previous) -> \(signature)); checking the server address")
+        Task {
+            // Give the new path a moment to settle - DHCP, the cellular radio, VPNs.
+            try? await Task.sleep(for: .seconds(1))
+            switch connectionState {
+            case .online:
+                if let origin = AddressRecovery.origin(of: activeServerURL) {
+                    _ = await recoverAddress(after: origin)
+                }
+            case .offline:
+                await connect()
+            default:
+                break
+            }
         }
     }
 
