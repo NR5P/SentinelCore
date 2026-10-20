@@ -480,10 +480,30 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
         CPNowPlayingTemplate.shared.updateNowPlayingButtons(buttons)
     }
 
+    // Now Playing goes straight on top of the tab bar, whatever was browsed to get there - the
+    // way Apple's own audio apps do it, and it keeps the stack inside the depth limit below.
     private func showNowPlaying() {
         guard let interface else { return }
         if interface.topTemplate === CPNowPlayingTemplate.shared { return }
+        if interface.templates.count > 1 {
+            interface.popToRootTemplate(animated: false, completion: nil)
+        }
         interface.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+    }
+
+    // CarPlay ends the app (clientExceededHierarchyDepthLimit) once the stack gets deeper than
+    // its category allows. With the Driving Task entitlement that is three templates, the tab
+    // bar included - stricter than Audio's five, and it applies to the music browsing too.
+    // So at the limit the top list is swapped for the new one instead of stacked on it: Artists,
+    // an artist, then an album shows Artists -> the album, and Back still makes sense.
+    static let maximumDepth = 3
+
+    private func push(_ template: CPTemplate) {
+        guard let interface else { return }
+        if interface.templates.count >= Self.maximumDepth {
+            interface.popTemplate(animated: false, completion: nil)
+        }
+        interface.pushTemplate(template, animated: true, completion: nil)
     }
 
     nonisolated func nowPlayingTemplateUpNextButtonTapped(_ nowPlayingTemplate: CPNowPlayingTemplate) {
@@ -497,7 +517,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
                 row.isPlaying = offset == start
                 return row
             }
-            interface?.pushTemplate(list("Up Next", Array(items), empty: "Nothing queued."), animated: true, completion: nil)
+            push(list("Up Next", Array(items), empty: "Nothing queued."))
         }
     }
 
@@ -752,7 +772,7 @@ final class CarPlayController: NSObject, CPNowPlayingTemplateObserver, CPTabBarT
             MainActor.assumeIsolated {
                 Task { @MainActor in
                     if let template = await next() {
-                        self?.interface?.pushTemplate(template, animated: true, completion: nil)
+                        self?.push(template)
                     }
                     completion()
                 }
