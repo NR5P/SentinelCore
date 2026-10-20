@@ -1,0 +1,30 @@
+[Unit]
+Description=SentinelCore App Review demo - fake cameras (loopback 9401-9404)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @ROOT@/kit/fake-cameras.py @ROOT@/kit/seed/cameras/feeds
+MemoryMax=300M
+CPUQuota=60%
+SyslogIdentifier=sentinelcore-demo-cams
+User=scdemo
+Group=scdemo
+Environment=HOME=@ROOT@
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+# The walls: no view of /home (the real install, its keys and settings), nothing writable but
+# the demo folder, no privilege gain, so no sudo, systemctl or polkit tricks either.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=@ROOT@
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

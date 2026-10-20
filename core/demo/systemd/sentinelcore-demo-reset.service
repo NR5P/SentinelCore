@@ -1,0 +1,7 @@
+[Unit]
+Description=SentinelCore App Review demo - rebuild the demo's data from scratch
+
+[Service]
+Type=oneshot
+ExecStart=@ROOT@/kit/demo.sh reset
+Environment=SCDEMO_ROOT=@ROOT@

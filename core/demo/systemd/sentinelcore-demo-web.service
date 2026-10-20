@@ -1,0 +1,31 @@
+[Unit]
+Description=SentinelCore App Review demo - dashboard (loopback 3360, behind demo.nr5p.com)
+After=network-online.target sentinelcore-demo.service
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@/live/web
+ExecStart=/usr/bin/dotnet @ROOT@/app/SentinelCore.Web/SentinelCore.Web.dll --contentRoot @ROOT@/live/web
+Environment=ASPNETCORE_ENVIRONMENT=Production
+MemoryMax=1200M
+SyslogIdentifier=sentinelcore-demo-web
+User=scdemo
+Group=scdemo
+Environment=HOME=@ROOT@
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+# The walls: no view of /home (the real install, its keys and settings), nothing writable but
+# the demo folder, no privilege gain, so no sudo, systemctl or polkit tricks either.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=@ROOT@
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

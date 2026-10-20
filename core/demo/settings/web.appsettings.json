@@ -1,0 +1,24 @@
+{
+  "_comment": "The demo dashboard's own appsettings.json (its content root is @LIVE@/web). Https off is what makes Kestrel honour Urls: with it on, the dashboard listens on every interface. Each URL that defaults to the real install's ingest app, HomeKit sidecar, go2rtc, updater or download VPN is pointed elsewhere.",
+  "Urls": "http://127.0.0.1:@WEB_PORT@",
+  "Https": { "Enabled": false },
+  "InternetExposed": { "Enabled": false },
+  "Discovery": { "Enabled": false },
+  "Bridge": { "DataDirectory": "@LIVE@/ingest/data" },
+  "MainAppSettingsPath": "@LIVE@/ingest/appsettings.json",
+  "MainAppBaseUrl": "http://127.0.0.1:@INGEST_PORT@",
+  "HomeKitSidecarBaseUrl": "http://127.0.0.1:1",
+  "HomeKitPersistDirectory": "@LIVE@/web/homekit-empty",
+  "CamerasDataDirectory": "@LIVE@/web/data",
+  "FfmpegPath": "ffmpeg",
+  "Go2Rtc": { "Path": "/nonexistent/go2rtc", "ApiPort": 21984, "RtspPort": 28554, "WebRtcPort": 28555 },
+  "Updates": { "ConfigFile": "/nonexistent/update.conf", "ServerUrl": "http://127.0.0.1:1", "InstallRoot": "@ROOT@" },
+  "MediaDownloads": {
+    "VpnStatusPath": "@LIVE@/web/no-vpn/status.json",
+    "NetworkModePath": "@LIVE@/web/no-vpn/mode",
+    "WireGuardConfigPath": "@LIVE@/web/no-vpn/wg.conf",
+    "ProwlarrConfigPath": "@LIVE@/web/no-vpn/prowlarr.xml"
+  },
+  "Logging": { "LogLevel": { "Default": "Warning", "Microsoft.Hosting.Lifetime": "Information" } },
+  "AllowedHosts": "*"
+}
