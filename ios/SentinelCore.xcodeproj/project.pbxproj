@@ -401,7 +401,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreMacWidgets/SentinelCoreMacWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -426,7 +426,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreMacWidgets/SentinelCoreMacWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -494,7 +494,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -531,7 +531,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -561,7 +561,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreWidgets/SentinelCoreWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SentinelCoreWidgets-Info.plist";
@@ -586,7 +586,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreWidgets/SentinelCoreWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SentinelCoreWidgets-Info.plist";
@@ -611,7 +611,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreShare/SentinelCoreShare.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SentinelCoreShare-Info.plist";
@@ -636,7 +636,7 @@
 				CODE_SIGN_ENTITLEMENTS = SentinelCoreShare/SentinelCoreShare.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = G4GK5372G8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SentinelCoreShare-Info.plist";
