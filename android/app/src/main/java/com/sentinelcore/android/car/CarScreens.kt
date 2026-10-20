@@ -22,8 +22,11 @@ import com.sentinelcore.android.data.Schedule
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.sentinelcore.android.audio.withHardTimeout
 import java.time.Duration
 import java.time.Instant
 
@@ -57,7 +60,7 @@ internal abstract class LoadingScreen<T>(carContext: CarContext, private val pol
     protected abstract suspend fun load(repository: SentinelRepository): T
 
     protected suspend fun refresh() {
-        runCatching { load(carContext.repository()) }
+        runCatching { carContext.withServer { load(it) } }
             .onSuccess { data = it; error = null }
             .onFailure { if (data == null) error = it.carMessage() }
         invalidate()
@@ -72,7 +75,7 @@ internal abstract class LoadingScreen<T>(carContext: CarContext, private val pol
     // Runs a command, says what happened, then re-reads the screen.
     protected fun command(done: String? = null, block: suspend (SentinelRepository) -> String?) {
         lifecycleScope.launch {
-            runCatching { block(carContext.repository()) }
+            runCatching { carContext.withServer { block(it) } }
                 .onSuccess { said -> (said ?: done)?.let(::toast) }
                 .onFailure { toast(it.carMessage()) }
             refresh()
@@ -110,6 +113,8 @@ internal abstract class LoadingScreen<T>(carContext: CarContext, private val pol
         .addAction(Action.Builder().setTitle("Refresh").setOnClickListener { reload() }.build())
         .build()
 }
+
+internal const val HOME_READ_LIMIT_MS = 8_000L
 
 internal fun row(title: String, vararg text: String?, onClick: (() -> Unit)? = null, browsable: Boolean = false): Row {
     val builder = Row.Builder().setTitle(title)
@@ -155,16 +160,32 @@ internal class CarHomeScreen(carContext: CarContext) : LoadingScreen<CarHomeScre
         val devices: List<HubDevice>?,
         val scenes: Int,
         val latest: ActivityItem?,
+        val alertsFailed: Boolean = false,
     )
 
-    override suspend fun load(repository: SentinelRepository): Home {
-        val alarm = runCatching { repository.alarmStatus() }.getOrNull()?.takeIf { it.enabled }
-        val hub = runCatching { repository.deviceHubEnabled() }.getOrDefault(false)
-        val devices = if (hub) runCatching { repository.devices() }.getOrNull() else null
-        val scenes = if (hub) runCatching { repository.schedules().count { it.isScene() } }.getOrDefault(0) else 0
-        // The one call every account can make; if it fails, the server really is unreachable.
-        val latest = repository.activity().filter { it.notified }.maxByOrNull { it.occurredAt }
-        return Home(alarm, devices, scenes, latest)
+    // Side by side, each cut off after 8 seconds, so one slow answer (a busy Device Hub, a long
+    // alert list) can't hold up or blank the rest of the screen.
+    override suspend fun load(repository: SentinelRepository): Home = coroutineScope {
+        fun <T> read(block: suspend () -> T) = async {
+            runCatching { withHardTimeout(HOME_READ_LIMIT_MS) { block() } }
+        }
+        val alarm = read { repository.alarmStatus() }
+        val hub = read { repository.deviceHubEnabled() }
+        val devices = read { repository.devices() }
+        val schedules = read { repository.schedules() }
+        val activity = read { repository.activity() }
+        val hubOn = hub.await().getOrNull() == true
+        val alerts = activity.await()
+        // Every account can read alerts, so when even that fails along with the hub check the
+        // server really is out of reach - say so rather than show a half-empty screen.
+        if (alerts.isFailure && hub.await().isFailure) throw alerts.exceptionOrNull()!!
+        Home(
+            alarm = alarm.await().getOrNull()?.takeIf { it.enabled },
+            devices = if (hubOn) devices.await().getOrNull() else null,
+            scenes = if (hubOn) schedules.await().getOrNull()?.count { it.isScene() } ?: 0 else 0,
+            latest = alerts.getOrNull()?.filter { it.notified }?.maxByOrNull { it.occurredAt },
+            alertsFailed = alerts.isFailure,
+        )
     }
 
     override fun onGetTemplate(): Template = list("Sentinel Core", back = false) {
@@ -184,7 +205,8 @@ internal class CarHomeScreen(carContext: CarContext) : LoadingScreen<CarHomeScre
             add(
                 row(
                     "Recent alerts",
-                    home.latest?.let { "${alertTitle(it)} - ${ago(it.occurredAt)}" } ?: "No recent alerts",
+                    home.latest?.let { "${alertTitle(it)} - ${ago(it.occurredAt)}" }
+                        ?: if (home.alertsFailed) "Couldn't load alerts" else "No recent alerts",
                     onClick = { screenManager.push(CarAlertsScreen(carContext)) },
                     browsable = true,
                 ),

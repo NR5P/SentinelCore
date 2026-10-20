@@ -29,7 +29,7 @@ android {
         applicationId = "com.sentinelcore.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 37
+        versionCode = 38
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -72,6 +72,9 @@ android {
     }
 
     testOptions {
+        // Robolectric (the Android Auto car-app tests in car/) reads the merged manifest and
+        // resources.
+        unitTests.isIncludeAndroidResources = true
         // The Organizer's real-server tests (OrganizerLiveServerTest) find the throwaway servers
         // scripts/with-organizer-servers.sh starts through these; plain test runs skip them.
         unitTests.all { test ->
@@ -90,6 +93,11 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+    // On-device tests (src/androidTest): Android Auto's media browsing, driven through the
+    // platform MediaBrowser against an in-process stub server.
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.navigation:navigation-compose:2.8.5")
@@ -136,4 +144,10 @@ dependencies {
     // JSON throughout, so its unit tests need the real thing.
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // Android Auto without a car: the Car App Library's own test host (TestCarContext,
+    // ScreenController) running the car screens on Robolectric, against a stub server.
+    testImplementation("androidx.car.app:app-testing:1.7.0")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

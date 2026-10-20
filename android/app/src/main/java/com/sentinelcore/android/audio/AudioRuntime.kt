@@ -23,7 +23,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.NoRouteToHostException
+import java.net.UnknownHostException
 import java.net.URL
 import java.util.UUID
 
@@ -52,7 +58,7 @@ class AudioRuntime private constructor(context: Context) {
 
     val api = AudioApi { method, path, query, body, contentType, timeout ->
         ensureAddress()
-        repository.organizerRequest(method, path, query, body, contentType, timeout)
+        withAddressRecovery { repository.organizerRequest(method, path, query, body, contentType, timeout) }
     }
 
     // "Import a list" on Music (core/docs/MOVIE_DOWNLOADS.md), over the same transport.
@@ -96,20 +102,62 @@ class AudioRuntime private constructor(context: Context) {
     private suspend fun ensureAddress() {
         if (attached != null || fallbackResolved) return
         fallbackResolved = true
+        chooseAddress(fallback)?.let { fallback.baseUrl = it }
+    }
+
+    // Home address if it answers, else the server's own plain-HTTP port (only to a server that
+    // has already proved it's this one - see ServerIdentity; with nobody watching there's no
+    // first-use exception, that waits for the app to be opened), else the remote address. Null
+    // when there's nothing better to try.
+    private suspend fun chooseAddress(repository: SentinelRepository): String? {
         val preferences = context.getSharedPreferences("sentinel_core", Context.MODE_PRIVATE)
         val local = preferences.getString(SentinelViewModel.SERVER_URL_KEY, "").orEmpty()
         val remote = preferences.getString(SentinelViewModel.REMOTE_SERVER_URL_KEY, "").orEmpty()
-        if (local.isBlank()) return
-        when (fallback.probe(local)) {
-            Reachability.REACHABLE -> fallback.baseUrl = local
-            // Only to a server that has already proved it's this one - see ServerIdentity. With
-            // nobody watching there's no first-use exception; that waits for the app to be opened.
+        if (local.isBlank()) return null
+        return when (repository.probe(local)) {
+            Reachability.REACHABLE -> local
             Reachability.CERTIFICATE_UNTRUSTED ->
-                if (ServerIdentity(context).check(local) == ServerIdentity.Check.Verified) {
-                    ServerAddress.httpFallback(local)?.let { fallback.baseUrl = it }
-                }
-            Reachability.UNREACHABLE -> if (remote.isNotBlank()) fallback.baseUrl = remote
+                if (ServerIdentity(context).check(local) == ServerIdentity.Check.Verified) ServerAddress.httpFallback(local) else null
+            Reachability.UNREACHABLE -> remote.ifBlank { null }
         }
+    }
+
+    // The address is worked out once - when the app connects, or on a cold start from the car -
+    // and nothing re-checks it while the app sits in a pocket. Drive away from home and the
+    // home address stops answering: the car app and Android Auto's music would fail for the rest
+    // of the trip. So a request that couldn't connect at all re-checks home against remote, and
+    // goes again once if the address changed. Only "never reached the server" failures, so a
+    // command can't run twice. The phone UI picks the same address up (same repository), and
+    // its own next connect re-decides anyway.
+    private val addressLock = Mutex()
+
+    suspend fun <T> withAddressRecovery(block: suspend () -> T): T = try {
+        block()
+    } catch (error: IOException) {
+        if (!error.neverReachedServer() || !recoverAddress()) throw error
+        block()
+    }
+
+    // True when the address was changed to one that answers.
+    suspend fun recoverAddress(): Boolean = addressLock.withLock {
+        val active = repository
+        val current = active.baseUrl
+        if (current.isNotBlank() && active.probe(current) == Reachability.REACHABLE) return@withLock false
+        val better = chooseAddress(active) ?: return@withLock false
+        if (better == current) return@withLock false
+        Log.d(AudioApi.TAG, "Server address $current stopped answering; using $better")
+        active.baseUrl = better
+        true
+    }
+
+    private fun IOException.neverReachedServer(): Boolean {
+        var cause: Throwable? = this
+        while (cause != null) {
+            if (cause is ConnectException || cause is NoRouteToHostException || cause is UnknownHostException) return true
+            if (cause is java.net.SocketTimeoutException && cause.message?.contains("connect", ignoreCase = true) == true) return true
+            cause = cause.cause
+        }
+        return false
     }
 
     // The repository with its address worked out - for callers outside the audio API (the

@@ -115,6 +115,18 @@ class AudioPlaybackService : MediaLibraryService() {
         }
     }
 
+    // The top-level tabs come from what the server last said was on, which on a first run (or a
+    // cold start from the car after a change) is wrong or nothing - the car then shows Downloads
+    // alone. Telling the car afterwards (notifyChildrenChanged) doesn't reach Android Auto's
+    // browser (AndroidAutoMediaTest showed it), so the tabs wait for the server's answer instead,
+    // a few seconds at most, before falling back to what was remembered.
+    private suspend fun refreshTabs() {
+        val fresh = runCatching { withHardTimeout(TABS_LIMIT_MS) { runtime.api.enabled() } }
+            .onFailure { android.util.Log.d(AudioApi.TAG, "Car tabs: couldn't re-read which are on (${it.message}); using what was remembered") }
+            .getOrNull() ?: return
+        if (fresh != runtime.enabled.value) runtime.setEnabled(fresh)
+    }
+
     private inner class Callback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
@@ -151,7 +163,11 @@ class AudioPlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future {
-            val children = runCatching { AutoBrowse.children(runtime, parentId) }.getOrElse {
+            if (parentId == ROOT) refreshTabs()
+            // Capped, so the car shows a reason rather than spinning through a 60-second read.
+            val children = runCatching {
+                withHardTimeout(BROWSE_LIMIT_MS) { AutoBrowse.children(runtime, parentId) }
+            }.getOrElse {
                 listOf(message("Can't reach Sentinel Core", it.message ?: "Check the connection."))
             }
             val from = (page * pageSize).coerceAtMost(children.size)
@@ -229,6 +245,8 @@ class AudioPlaybackService : MediaLibraryService() {
         const val LOVE = "sentinel.love"
         const val CHANNEL = "audio_playback"
         const val ROOT = "root"
+        const val BROWSE_LIMIT_MS = 20_000L
+        const val TABS_LIMIT_MS = 5_000L
 
         fun folder(id: String, title: String, subtitle: String? = null, art: Uri? = null, playable: Boolean = false, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED): MediaItem =
             MediaItem.Builder()

@@ -114,6 +114,24 @@ once any CarPlay entitlement is in the profile.
    alerts. The review is separate from the phone review and can take a few days.
 3. Android Auto screenshots aren't required for Android Auto (only for Automotive OS).
 
+### Testing without a car or a phone
+
+Two automated suites cover what Android Auto does with the app, against stub servers:
+
+- **Car screens** (alarm, Device Hub / MQTT devices, scenes, alerts), JVM, no emulator:
+  `./gradlew :app:testDebugUnitTest --tests 'com.sentinelcore.android.car.*'`. Runs every screen
+  through the Car App Library's own test host, whose template builders enforce the car's rules,
+  and covers commands, the PIN and disarm rules, a slow Device Hub, an unreachable server, and the
+  home address going away mid-drive.
+- **Music and podcasts in the car**, on an emulator or phone:
+  `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.sentinelcore.android.audio.AndroidAutoMediaTest`.
+  It's a MediaBrowser client, the same protocol Android Auto uses: tabs, an album, play, Next, an
+  Up Next episode, empty Downloads, and servers that are down or never answer.
+
+What only a real head unit shows: how it looks, and audio focus. From Android 15 an app may take
+audio focus only while it's on screen or bound by an app that is, so the media test puts the app
+on screen first; in a car, Android Auto sends the play command.
+
 ### Testing on the Desktop Head Unit (DHU)
 
 The DHU is installed on this Mac (`~/Library/Android/sdk/extras/google/auto/desktop-head-unit`). It

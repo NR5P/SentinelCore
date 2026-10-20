@@ -94,6 +94,19 @@ internal suspend fun CarContext.repository(): SentinelRepository {
     return repository
 }
 
+// Every server call the car makes: capped at 20 seconds (a request's own read timeout is 60,
+// and a car screen shouldn't spin that long), and re-checking home against remote if the address
+// in use stopped answering - see AudioRuntime.withAddressRecovery.
+internal suspend fun <T> CarContext.withServer(block: suspend (SentinelRepository) -> T): T {
+    val runtime = AudioRuntime.get(this)
+    return com.sentinelcore.android.audio.withHardTimeout(CAR_REQUEST_LIMIT_MS) {
+        repository()
+        runtime.withAddressRecovery { block(runtime.repository) }
+    }
+}
+
+internal const val CAR_REQUEST_LIMIT_MS = 20_000L
+
 // VI-1: anything that sends the driver to the phone says to look only when it's safe.
 internal const val NOT_SET_UP = "Sentinel Core isn't set up yet. When it's safe, open it on your phone."
 internal const val PHONE_ONLY = "When it's safe, use Sentinel Core on your phone."
