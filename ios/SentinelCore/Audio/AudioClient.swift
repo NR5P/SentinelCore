@@ -290,7 +290,10 @@ extension SentinelClient {
 
     // MARK: "+ Add" album downloads
 
-    func musicDownloadsStatus() async throws -> MusicDownloadsStatus { try await audioGet("/api/music/downloads/status") }
+    func musicDownloadsStatus() async throws -> MusicDownloadsStatus {
+        guard StoreBuild.mediaDownloads else { throw StoreBuild.DownloadsLeftOut() }
+        return try await audioGet("/api/music/downloads/status")
+    }
 
     func musicDownloadLookup(_ q: String) async throws -> [MusicLookupResult] {
         try await audioGet("/api/music/downloads/lookup", [URLQueryItem(name: "q", value: q)], timeout: 40)

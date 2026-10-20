@@ -1,5 +1,22 @@
 import Foundation
 
+// What a store build (any Release archive: STORE_BUILD in the project's Release settings) leaves
+// out - the torrent downloads behind Movies' and Music's "+ Add", Import a List, search's download
+// offer and Suggested for You. App Review rejects apps that fetch films and albums from torrent
+// sites, so App Store and TestFlight builds never ask the server about downloads and every one of
+// those screens stays hidden. The server's own dashboard keeps them, and so do Debug builds.
+enum StoreBuild {
+    #if STORE_BUILD
+    static let mediaDownloads = false
+    #else
+    static let mediaDownloads = true
+    #endif
+
+    struct DownloadsLeftOut: LocalizedError {
+        var errorDescription: String? { "Downloads aren't part of this build." }
+    }
+}
+
 @MainActor
 final class SentinelClient {
     private unowned let model: AppModel
@@ -733,7 +750,8 @@ final class SentinelClient {
     // Answers while the feature is off, so the Movies tab can decide whether to show "+ Add". An
     // older server answers 404, which the caller reads as off.
     func mediaDownloadsStatus() async throws -> MediaDownloadsStatus {
-        try await get("/api/media/downloads/status")
+        guard StoreBuild.mediaDownloads else { throw StoreBuild.DownloadsLeftOut() }
+        return try await get("/api/media/downloads/status")
     }
 
     // kind is "movie" or "show".

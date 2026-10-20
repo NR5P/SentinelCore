@@ -47,7 +47,15 @@ android {
         }
     }
     buildTypes {
+        // MEDIA_DOWNLOADS: the torrent downloads behind Movies' and Music's "+ Add", Import a
+        // list, search's download offer and Suggested for you. Google Play's policy bars apps that
+        // fetch films and albums from torrent sites, so release builds (the Play uploads) never
+        // ask the server about downloads and those screens stay hidden; the dashboard keeps them.
+        debug {
+            buildConfigField("boolean", "MEDIA_DOWNLOADS", "true")
+        }
         release {
+            buildConfigField("boolean", "MEDIA_DOWNLOADS", "false")
             if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(

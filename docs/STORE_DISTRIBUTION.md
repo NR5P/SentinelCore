@@ -229,6 +229,15 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
   including Android Auto) and `dataSync` (offline downloads). Play Console's App content page
   asks for a description of each foreground-service type an app uses, so expect to fill that in
   with the rest of the *Set up your app* checklist.
+- **Store builds leave downloads out (2026-10-20).** Movies' and Music's "+ Add", Import a list,
+  search's download offer and Suggested for you fetch films and albums from torrent sites, which
+  App Review (guideline 5.2.3) and Play's intellectual-property policy reject. Every Release build
+  — so every TestFlight, App Store and Play upload — never asks the server whether downloads are
+  on, so those screens never show: `STORE_BUILD` in the iOS and tvOS projects' Release settings
+  (`StoreBuild.mediaDownloads` in each `SentinelClient.swift`) and `BuildConfig.MEDIA_DOWNLOADS`
+  in `android/app/build.gradle.kts`. Debug builds and the server's web dashboard keep them. Don't
+  make this a server-side or remote switch: a feature reviewers can't see that turns on later is
+  a hidden feature (Apple 2.3.1), which risks the developer account, not just one build.
 - **Screenshots:** iPhone 6.9", iPad 13", Mac, Apple TV; Android phone + 7" and 10" tablets;
   Play also wants a 512×512 icon and a 1024×500 feature graphic. `branding/` has the icon
   master.

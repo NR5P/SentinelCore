@@ -220,8 +220,9 @@ class AudioApi(private val transport: AudioTransport) {
 
     // ---------------- + Add (album downloads) ----------------
 
-    // Null when the feature is not there at all (404: Music off or an older server).
-    suspend fun musicDownloadStatus(): MusicDownloadStatus? = try {
+    // Null when the feature is not there at all (404: Music off or an older server), and always
+    // in release builds, which leave downloads out (BuildConfig.MEDIA_DOWNLOADS).
+    suspend fun musicDownloadStatus(): MusicDownloadStatus? = if (!com.sentinelcore.android.BuildConfig.MEDIA_DOWNLOADS) null else try {
         parseMusicDownloadStatus(obj("GET", "/api/music/downloads/status"))
     } catch (error: AudioApiException) {
         if (error.status == 404) null else throw error

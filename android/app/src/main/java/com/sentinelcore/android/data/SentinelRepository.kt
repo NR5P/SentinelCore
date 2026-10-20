@@ -561,8 +561,10 @@ class SentinelRepository(
     // ---------------- Movie downloads (core/docs/MOVIE_DOWNLOADS.md) ----------------
 
     // Null when the feature is not there to use: a 404 (turned off, Movies & TV off, or a server
-    // older than downloads) hides "+ Add" rather than showing an error.
+    // older than downloads) hides "+ Add" rather than showing an error. Release builds leave
+    // downloads out altogether (BuildConfig.MEDIA_DOWNLOADS in build.gradle.kts).
     suspend fun mediaDownloadStatus(): MediaDownloadStatus? = withContext(Dispatchers.IO) {
+        if (!com.sentinelcore.android.BuildConfig.MEDIA_DOWNLOADS) return@withContext null
         val (status, body) = requestWithStatus(MediaDownloadApi.STATUS_PATH, method = "GET", body = null)
         when {
             status in 200..299 -> runCatching { parseMediaDownloadStatus(JSONObject(body)) }.getOrNull()

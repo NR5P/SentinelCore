@@ -216,7 +216,10 @@ final class AudioAPI {
 
     // MARK: Getting music
 
-    func musicDownloadsStatus() async throws -> MusicDownloadsStatus { try await get("/api/music/downloads/status") }
+    func musicDownloadsStatus() async throws -> MusicDownloadsStatus {
+        guard StoreBuild.mediaDownloads else { throw StoreBuild.DownloadsLeftOut() }
+        return try await get("/api/music/downloads/status")
+    }
 
     func musicLookup(_ query: String) async throws -> [MusicLookupResult] {
         try await get("/api/music/downloads/lookup", Self.q([("q", query)]), timeout: 45)

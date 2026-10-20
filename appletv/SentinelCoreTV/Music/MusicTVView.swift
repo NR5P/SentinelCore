@@ -63,7 +63,7 @@ struct MusicTVView: View {
             while audio.api == nil { try? await Task.sleep(for: .milliseconds(300)) }
             let defaults = UserDefaults.standard
             if let raw = defaults.string(forKey: "debugMusicPane"), let picked = Pane(rawValue: raw) {
-                if picked == .add { canDownload = true }
+                if picked == .add { canDownload = StoreBuild.mediaDownloads }
                 pane = picked
             }
             try? await Task.sleep(for: .milliseconds(600))
