@@ -237,9 +237,11 @@ The client apps have their own build and test procedures; see
 The first visit to the dashboard asks for the **admin account** (username + password). The login
 is required from first boot: until that account exists every API call except creating it gets
 `401`, the apps' sign-in shows "This server has no accounts yet...", and the account can only be
-created from a local-network address, never through the Internet Exposed port. (A reverse proxy
-or tunnel pointed at 3320 on the same machine arrives from `127.0.0.1` and so counts as local -
-one more reason to create the account before setting any of that up.) Do this straight after
+created by a device connecting directly from the local network - never through the Internet
+Exposed port, and never through a tunnel or reverse proxy. (Those connect from `127.0.0.1`, which
+used to count as local; since 2026-10-20 any request carrying a proxy's forwarding header -
+`CF-Connecting-IP`, `X-Forwarded-For`, `Forwarded`, `X-Real-IP` - is refused, so a Cloudflare
+Tunnel published before the account exists can't be used to claim the server.) Do this straight after
 installing - until it's done, anyone on the LAN who opens the dashboard first gets to choose the
 admin password.
 

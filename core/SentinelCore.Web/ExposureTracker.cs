@@ -18,14 +18,18 @@ public sealed class ExposureTracker
     public bool HasSeenExternalRequest { get; private set; }
     public string? LastExternalAddress { get; private set; }
     public DateTimeOffset? LastExternalAt { get; private set; }
+    // True when that request came through a tunnel or reverse proxy, which usually means the owner
+    // published the dashboard on purpose and the visitor reached it over HTTPS at the proxy.
+    public bool LastExternalViaProxy { get; private set; }
 
-    public void Record(IPAddress address)
+    public void Record(IPAddress address, bool viaProxy = false)
     {
         lock (_gate)
         {
             HasSeenExternalRequest = true;
             LastExternalAddress = address.ToString();
             LastExternalAt = DateTimeOffset.Now;
+            LastExternalViaProxy = viaProxy;
         }
     }
 
@@ -61,4 +65,43 @@ public sealed class ExposureTracker
     }
 
     private static bool IsIPv6UniqueLocal(IPAddress address) => (address.GetAddressBytes()[0] & 0xFE) == 0xFC;
+
+    // Headers a reverse proxy or tunnel adds on the way in: cloudflared (CF-Connecting-IP, CF-Ray),
+    // nginx/Caddy/Traefik/ngrok/Tailscale Funnel (X-Forwarded-For, X-Real-IP, Forwarded), Akamai
+    // and Cloudflare Enterprise (True-Client-IP). A tunnel's own connection is loopback, so without
+    // these the whole internet would look like the LAN.
+    private static readonly string[] ForwardingHeaders =
+        ["CF-Connecting-IP", "CF-Ray", "X-Forwarded-For", "X-Real-IP", "Forwarded", "True-Client-IP"];
+
+    public static bool ArrivedThroughProxy(HttpRequest request) =>
+        ForwardingHeaders.Any(header => request.Headers.ContainsKey(header));
+
+    // For decisions that must not be fooled: a direct connection from a LAN address, with no sign
+    // of a proxy in between. Any forwarding header disqualifies the request - its contents can be
+    // forged, but a client can only ever add such a header, never strip the one a proxy adds, so
+    // this can only err towards refusing.
+    public static bool IsDirectFromLocalNetwork(HttpContext context) =>
+        IsLocalNetwork(context.Connection.RemoteIpAddress) && !ArrivedThroughProxy(context.Request);
+
+    // For the exposure warning: the first address a proxy reports that is outside the LAN, or the
+    // proxy's own peer when it names no client (CF-Ray alone). Null when everything named is local -
+    // a LAN reverse proxy relaying a LAN device. Observational only, so forged values just mislabel
+    // a warning.
+    public static IPAddress? ForwardedExternalClient(HttpRequest request)
+    {
+        if (!ArrivedThroughProxy(request)) return null;
+        var named = new List<string>();
+        foreach (var header in new[] { "CF-Connecting-IP", "True-Client-IP", "X-Real-IP", "X-Forwarded-For" })
+            foreach (var value in request.Headers[header])
+                if (value is not null) named.AddRange(value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+        foreach (var value in request.Headers["Forwarded"])
+            if (value is not null)
+                foreach (var part in value.Split([',', ';'], StringSplitOptions.TrimEntries))
+                    if (part.StartsWith("for=", StringComparison.OrdinalIgnoreCase))
+                        named.Add(part[4..].Trim('"', '[', ']'));
+
+        var parsed = named.Select(n => IPAddress.TryParse(n, out var ip) ? ip : null).Where(ip => ip is not null).ToList();
+        if (parsed.Count == 0) return request.HttpContext.Connection.RemoteIpAddress ?? IPAddress.Loopback;
+        return parsed.FirstOrDefault(ip => !IsLocalNetwork(ip));
+    }
 }

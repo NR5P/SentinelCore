@@ -164,10 +164,13 @@ public static class AuthEndpoints
                 }
 
                 var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
-                if (isExposedRequest || !ExposureTracker.IsLocalNetwork(context.Connection.RemoteIpAddress))
+                // Direct from the LAN only: a Cloudflare Tunnel or other reverse proxy on this
+                // machine connects from loopback, so without the proxy check anyone on the internet
+                // could claim a fresh install that was published before its owner signed in.
+                if (isExposedRequest || !ExposureTracker.IsDirectFromLocalNetwork(context))
                 {
-                    logger.LogWarning("Refused to create the first admin account for a request from {Ip}, which is outside the local network", ip);
-                    return Results.Json(new { errors = new[] { "The first admin account can only be created from a device on the same network as this server." } }, statusCode: StatusCodes.Status403Forbidden);
+                    logger.LogWarning("Refused to create the first admin account for a request from {Ip}, which is outside the local network or came through a tunnel or proxy", ip);
+                    return Results.Json(new { errors = new[] { "The first admin account can only be created from a device on the same network as this server, connecting to it directly - not through a tunnel, proxy or its internet address." } }, statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 var errors = ValidateCredentials(request.Username, request.Password);

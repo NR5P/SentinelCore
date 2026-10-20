@@ -139,6 +139,27 @@ public sealed class WebAuthorizationTests : IDisposable
         Assert.False(await scope.ServiceProvider.GetRequiredService<IAccountStore>().AnyAccountsExistAsync(ct));
     }
 
+    // A Cloudflare Tunnel (or any reverse proxy on this machine) connects from loopback, which
+    // used to count as the local network - so a fresh install published before its owner signed in
+    // could be claimed by anyone on the internet. The proxy's own headers now close that door.
+    [Theory]
+    [InlineData("CF-Connecting-IP", "203.0.113.9")]
+    [InlineData("X-Forwarded-For", "203.0.113.9")]
+    public async Task FreshInstall_TheFirstAdminCannotBeCreatedThroughATunnel(string header, string value)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddSingleton<IStartupFilter>(new RemoteAddressStartupFilter(IPAddress.Loopback))));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(header, value);
+
+        using var response = await client.PostAsJsonAsync("/api/auth/enable", new { Username = "owner", Password = "correct horse battery" }, ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<IAccountStore>().AnyAccountsExistAsync(ct));
+    }
+
     // TestServer leaves RemoteIpAddress unset, which counts as local; this pins it to a public one.
     private sealed class RemoteAddressStartupFilter(IPAddress address) : IStartupFilter
     {

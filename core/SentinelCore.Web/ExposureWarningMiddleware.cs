@@ -19,18 +19,34 @@ public sealed class ExposureWarningMiddleware(
 
     public async Task InvokeAsync(HttpContext context)
     {
-        var address = context.Connection.RemoteIpAddress;
+        var peer = context.Connection.RemoteIpAddress;
+        // Through a tunnel or reverse proxy the peer is the proxy (loopback), so the client it
+        // reports is what says whether this dashboard is reachable from the internet.
+        var viaProxy = ExposureTracker.IsLocalNetwork(peer);
+        var address = viaProxy ? ExposureTracker.ForwardedExternalClient(context.Request) : peer;
 
-        if (!ExposureTracker.IsLocalNetwork(address))
+        if (address is not null)
         {
-            tracker.Record(address!);
+            tracker.Record(address, viaProxy);
 
             bool isNew;
-            lock (_gate) isNew = _loggedAddresses.Add(address!.ToString());
+            lock (_gate)
+            {
+                // Behind a public tunnel every visitor is a new address; start over rather than
+                // grow without bound (the cost is one repeat log line per address).
+                if (_loggedAddresses.Count >= 1000) _loggedAddresses.Clear();
+                isNew = _loggedAddresses.Add(address.ToString());
+            }
 
             if (isNew)
             {
-                if (await AuthSettingsDto.IsLoginRequiredAsync(settings, context.RequestAborted))
+                var loginRequired = await AuthSettingsDto.IsLoginRequiredAsync(settings, context.RequestAborted);
+                if (loginRequired && viaProxy)
+                {
+                    // Published through a tunnel with the login on: the expected setup, not a warning.
+                    logger.LogInformation("Request from {Address} through a tunnel or reverse proxy; the dashboard login is on.", address);
+                }
+                else if (loginRequired)
                 {
                     logger.LogWarning(
                         "Request from {Address}, which is outside your local network. The dashboard login is on, " +

@@ -786,6 +786,7 @@ app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFi
         externalRequestSeen = tracker.HasSeenExternalRequest,
         lastExternalAddress = tracker.LastExternalAddress,
         lastExternalAt = tracker.LastExternalAt,
+        lastExternalViaProxy = tracker.LastExternalViaProxy,
         loginEnabled
     });
     // The old blanket AuthGateMiddleware gated everything under /api bar three named paths, so

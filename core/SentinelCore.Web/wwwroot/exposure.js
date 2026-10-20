@@ -10,14 +10,16 @@ window.GateWatchExposure = (function () {
       if (!response.ok) return;
       const payload = await response.json();
 
-      if (!payload.externalRequestSeen) {
+      // Through a tunnel or reverse proxy with the login on is the deliberate way to publish this
+      // dashboard (the visitor reached the proxy over HTTPS), so there is nothing to warn about.
+      if (!payload.externalRequestSeen || (payload.loginEnabled && payload.lastExternalViaProxy)) {
         banner.classList.add("hidden");
         return;
       }
 
       banner.textContent = payload.loginEnabled
         ? `reached from ${payload.lastExternalAddress}, outside your network - login is on, but this is plain HTTP. Put it behind HTTPS if that was intended.`
-        : `reached from ${payload.lastExternalAddress}, outside your network, with no login set - anyone who can reach this address can view your cameras and change settings.`;
+        : `reached from ${payload.lastExternalAddress}, outside your network${payload.lastExternalViaProxy ? " (through a tunnel or proxy)" : ""}, with no login set - anyone who can reach this address can view your cameras and change settings.`;
       banner.classList.toggle("exposure-banner-severe", !payload.loginEnabled);
       banner.classList.remove("hidden");
     } catch {
