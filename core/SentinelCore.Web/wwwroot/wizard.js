@@ -124,16 +124,22 @@ window.GateWatchWizard = (function () {
       skippable: true,
       render() {
         bodyEl.innerHTML = `
-          <p>Add at least one camera by its stream URL (most IP cameras expose an
-          <code>rtsp://</code> address). You can add more, or edit this later, from the
-          CAMERAS tab.</p>
+          <p>Pick a camera found on your network, or type its IP address or full stream URL
+          (most IP cameras expose an <code>rtsp://</code> address). You can add more, or edit
+          this later, from the CAMERAS tab.</p>
+          <div id="wizard-scan-interfaces"></div>
+          <div class="wizard-actions">
+            <button type="button" class="btn" id="wizard-scan-btn">scan network</button>
+            <span id="wizard-scan-status" class="wizard-hint"></span>
+          </div>
+          <div id="wizard-scan-results" class="wizard-scan-results"></div>
           <div class="field-row field-row-wide">
             <label class="field-label">Name</label>
             <input type="text" id="wizard-camera-name" class="field-input" placeholder="e.g. front gate" />
           </div>
           <div class="field-row field-row-wide">
-            <label class="field-label">Stream URL</label>
-            <input type="text" id="wizard-camera-url" class="field-input" placeholder="rtsp://192.168.1.50:554/stream" />
+            <label class="field-label">IP Address or Stream URL</label>
+            <input type="text" id="wizard-camera-url" class="field-input" placeholder="192.168.1.50 or rtsp://192.168.1.50:554/stream" />
           </div>
           <div class="field-row">
             <label class="field-label">Username</label>
@@ -148,41 +154,15 @@ window.GateWatchWizard = (function () {
             <span id="wizard-camera-result"></span>
           </div>`;
 
-        document.getElementById("wizard-add-camera-btn").addEventListener("click", async () => {
-          const resultEl = document.getElementById("wizard-camera-result");
-          const name = document.getElementById("wizard-camera-name").value.trim();
-          const streamUrl = document.getElementById("wizard-camera-url").value.trim();
-          if (!name || !streamUrl) {
-            resultEl.textContent = "name and stream URL are required";
-            resultEl.className = "wizard-status-bad";
-            return;
-          }
-          resultEl.textContent = "adding...";
-          try {
-            const response = await fetch("/api/cameras", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name,
-                streamUrl,
-                username: document.getElementById("wizard-camera-user").value.trim() || null,
-                password: document.getElementById("wizard-camera-pass").value || null,
-                includeAudio: false
-              })
-            });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              resultEl.textContent = (payload.errors || ["could not add camera"]).join(" ");
-              resultEl.className = "wizard-status-bad";
-              return;
-            }
-            resultEl.textContent = "camera added";
-            resultEl.className = "wizard-status-ok";
-          } catch {
-            resultEl.textContent = "network error";
-            resultEl.className = "wizard-status-bad";
-          }
-        });
+        document.getElementById("wizard-scan-btn").addEventListener("click", startCameraScan);
+        document.getElementById("wizard-add-camera-btn").addEventListener("click", addCamera);
+
+        // Kick the scan off straight away - the multicast probe only takes a couple of seconds,
+        // and on a first run "here are your cameras" is far friendlier than an empty URL box.
+        loadScanInterfaces().then(startCameraScan);
+      },
+      leave() {
+        stopScanPolling();
       }
     },
     {
@@ -276,6 +256,284 @@ window.GateWatchWizard = (function () {
     }
   ];
 
+  // ---------------- Camera step: network scan + add ----------------
+  // The same discovery endpoints the CAMERAS tab uses (CameraDiscoveryEndpoints), cut down to
+  // what a first run needs: scan the non-virtual interfaces straight away, list what answered,
+  // and let one click put a camera's address into the form below.
+
+  let scanPollTimer = null;
+
+  async function loadScanInterfaces() {
+    let interfaces;
+    try {
+      const response = await fetch("/api/cameras/discovery/interfaces");
+      if (!response.ok) throw new Error();
+      interfaces = await response.json();
+    } catch {
+      interfaces = [];
+    }
+
+    // The user may have moved on to another step while that was loading.
+    const root = document.getElementById("wizard-scan-interfaces");
+    if (!root) return;
+    root.innerHTML = "";
+    if (interfaces.length === 0) return;
+
+    // Shown rather than silently picked, same as the CAMERAS tab: the virtual-adapter check is a
+    // name heuristic, and a wrong guess either scans nothing useful or sweeps a VPN subnet.
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "networks to scan:";
+    root.appendChild(label);
+    for (const iface of interfaces) {
+      const row = document.createElement("label");
+      row.className = "field-checkbox-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = iface.address;
+      input.dataset.role = "wizard-scan-interface";
+      input.checked = !iface.looksVirtual;
+      const text = document.createElement("span");
+      text.textContent = `${iface.address} (${iface.name}${iface.looksVirtual ? " - looks virtual" : ""})`;
+      row.append(input, text);
+      root.appendChild(row);
+    }
+
+    const deepRow = document.createElement("label");
+    deepRow.className = "field-checkbox-row";
+    deepRow.dataset.tip = "Also tries every address on the network, for cameras that don't answer the quick scan (ONVIF turned off, or multicast blocked). Takes much longer.";
+    const deepInput = document.createElement("input");
+    deepInput.type = "checkbox";
+    deepInput.id = "wizard-scan-deep";
+    const deepText = document.createElement("span");
+    deepText.textContent = "check every address (slower)";
+    deepRow.append(deepInput, deepText);
+    root.appendChild(deepRow);
+  }
+
+  function setScanStatus(message, kind) {
+    const el = document.getElementById("wizard-scan-status");
+    if (!el) return;
+    el.textContent = message;
+    el.className = "wizard-hint" + (kind ? ` wizard-status-${kind}` : "");
+  }
+
+  async function startCameraScan() {
+    const resultsEl = document.getElementById("wizard-scan-results");
+    if (!resultsEl) return;
+
+    const selected = [...document.querySelectorAll('input[data-role="wizard-scan-interface"]:checked')]
+      .map(input => input.value);
+    if (selected.length === 0) {
+      setScanStatus("no network selected - type the camera's address below instead", "bad");
+      return;
+    }
+
+    const deepScan = document.getElementById("wizard-scan-deep")?.checked ?? false;
+    stopScanPolling();
+    resultsEl.innerHTML = "";
+    setScanStatus(deepScan ? "checking every address - this takes a while..." : "scanning...", null);
+
+    try {
+      const response = await fetch("/api/cameras/discovery/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interfaceAddresses: selected, deepScan })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setScanStatus((payload.errors || ["scan could not start"]).join(" "), "bad");
+        return;
+      }
+      pollCameraScan(payload.scanId);
+    } catch {
+      setScanStatus("network error while starting the scan", "bad");
+    }
+  }
+
+  function pollCameraScan(scanId) {
+    stopScanPolling();
+    scanPollTimer = setInterval(async () => {
+      // Left the camera step mid-scan - nothing to draw into any more.
+      if (!document.getElementById("wizard-scan-results")) {
+        stopScanPolling();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/cameras/discovery/scan/${scanId}`);
+        if (!response.ok) {
+          stopScanPolling();
+          setScanStatus("scan result no longer available", "bad");
+          return;
+        }
+        const snapshot = await response.json();
+        renderScanResults(snapshot.results);
+        if (snapshot.status === "Completed") {
+          stopScanPolling();
+          setScanStatus(snapshot.results.length === 0
+            ? "no cameras answered - type the camera's IP address below, or tick \"check every address\" and scan again"
+            : `found ${snapshot.results.length} camera(s) - pick one to fill in the form`,
+            snapshot.results.length === 0 ? null : "ok");
+        }
+      } catch {
+        stopScanPolling();
+        setScanStatus("network error while checking scan progress", "bad");
+      }
+    }, 1000);
+  }
+
+  function stopScanPolling() {
+    if (scanPollTimer) {
+      clearInterval(scanPollTimer);
+      scanPollTimer = null;
+    }
+  }
+
+  function renderScanResults(results) {
+    const root = document.getElementById("wizard-scan-results");
+    if (!root) return;
+    root.innerHTML = "";
+
+    for (const item of results) {
+      const card = document.createElement("div");
+      card.className = "camera-card";
+
+      const info = document.createElement("div");
+      info.className = "camera-card-info";
+      const meta = [item.ipAddress, item.needsCredentials ? "needs username/password" : null,
+        item.alreadySaved ? "already added" : null].filter(Boolean).join(" - ");
+      info.innerHTML = `
+        <span class="camera-card-name">${escapeHtml(item.suggestedName)}</span>
+        <span class="camera-card-meta">${escapeHtml(meta)}</span>`;
+      card.appendChild(info);
+
+      if (!item.alreadySaved) {
+        const actions = document.createElement("div");
+        actions.className = "camera-card-actions";
+        const useBtn = document.createElement("button");
+        useBtn.type = "button";
+        useBtn.className = "btn";
+        useBtn.textContent = "use";
+        useBtn.addEventListener("click", () => {
+          // Just the bare address: "add camera" probes it into a real, verified stream URL, once
+          // the user has had the chance to type the credentials this scan never asked for.
+          document.getElementById("wizard-camera-name").value = item.suggestedName;
+          document.getElementById("wizard-camera-url").value = item.ipAddress;
+          setCameraResult("", null);
+          document.getElementById(item.needsCredentials ? "wizard-camera-user" : "wizard-camera-name").focus();
+        });
+        actions.appendChild(useBtn);
+        card.appendChild(actions);
+      }
+
+      root.appendChild(card);
+    }
+  }
+
+  function setCameraResult(message, kind) {
+    const el = document.getElementById("wizard-camera-result");
+    if (!el) return;
+    el.textContent = message;
+    el.className = kind ? `wizard-status-${kind}` : "";
+  }
+
+  // A bare IP/host, or a URL with no path yet - what someone types when they know where the
+  // camera is but not its stream path. Anything with a real path is taken as-is.
+  function looksLikeABareAddress(raw) {
+    try {
+      const url = new URL(raw.includes("://") ? raw : `rtsp://${raw}`);
+      return !url.pathname || url.pathname === "/";
+    } catch {
+      return true;
+    }
+  }
+
+  function hostOf(raw) {
+    try {
+      return new URL(raw.includes("://") ? raw : `rtsp://${raw}`).hostname;
+    } catch {
+      return raw;
+    }
+  }
+
+  async function addCamera() {
+    const nameField = document.getElementById("wizard-camera-name");
+    const urlField = document.getElementById("wizard-camera-url");
+    const username = document.getElementById("wizard-camera-user").value.trim() || null;
+    const password = document.getElementById("wizard-camera-pass").value || null;
+    const input = urlField.value.trim();
+    if (!input) {
+      setCameraResult("pick a camera above, or enter its IP address or stream URL", "bad");
+      return;
+    }
+
+    let streamUrl = input;
+    let ptz = { ptzEnabled: false, onvifPtzServiceUrl: null, onvifProfileToken: null };
+
+    // An address alone isn't something the camera list can play - turn it into the camera's real
+    // stream URL first, with the same probe the CAMERAS tab's Test Connection uses.
+    if (looksLikeABareAddress(input)) {
+      setCameraResult("looking for the camera's stream...", null);
+      try {
+        const response = await fetch("/api/cameras/discovery/probe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: hostOf(input), username, password })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setCameraResult((payload.errors || ["could not check that address"]).join(" "), "bad");
+          return;
+        }
+        if (payload.status !== "Found") {
+          setCameraResult(payload.message || "no camera stream found at that address", "bad");
+          return;
+        }
+        streamUrl = payload.streamUrl;
+        urlField.value = streamUrl;
+        if (!nameField.value.trim() && payload.suggestedName) nameField.value = payload.suggestedName;
+        if (payload.supportsPtz) {
+          ptz = {
+            ptzEnabled: true,
+            onvifPtzServiceUrl: payload.onvifPtzServiceUrl || null,
+            onvifProfileToken: payload.onvifProfileToken || null
+          };
+        }
+      } catch {
+        setCameraResult("network error while looking for the camera", "bad");
+        return;
+      }
+    }
+
+    const name = nameField.value.trim();
+    if (!name) {
+      setCameraResult("give the camera a name", "bad");
+      nameField.focus();
+      return;
+    }
+
+    setCameraResult("adding...", null);
+    try {
+      const response = await fetch("/api/cameras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, streamUrl, username, password, includeAudio: false, ...ptz })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setCameraResult((payload.errors || ["could not add camera"]).join(" "), "bad");
+        return;
+      }
+      // Cleared so the next camera can go straight in - adding several is the normal case.
+      for (const id of ["wizard-camera-name", "wizard-camera-url", "wizard-camera-user", "wizard-camera-pass"]) {
+        document.getElementById(id).value = "";
+      }
+      setCameraResult(`added "${name}" - add another, or press next`, "ok");
+    } catch {
+      setCameraResult("network error", "bad");
+    }
+  }
+
   async function saveVisionFields() {
     const backend = document.getElementById("wizard-vision-backend").value;
     const routingOk = await put("/api/settings/vision-routing", {
@@ -346,9 +604,13 @@ window.GateWatchWizard = (function () {
     toastTimeout = setTimeout(() => { toast.className = "toast hidden"; }, 3000);
   }
 
+  let renderedStep = null;
+
   async function renderStep() {
     errorsEl.innerHTML = "";
+    renderedStep?.leave?.();
     const step = STEPS[stepIndex];
+    renderedStep = step;
     titleEl.textContent = step.title;
     stepCountEl.textContent = `${stepIndex + 1} / ${STEPS.length}`;
     backBtn.classList.toggle("hidden", stepIndex === 0);
