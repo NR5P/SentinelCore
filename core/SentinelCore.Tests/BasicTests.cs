@@ -807,6 +807,51 @@ public sealed class BasicTests
         Assert.False(await client.IsReadyAsync(TestContext.Current.CancellationToken));
     }
 
+    // Picking Ollama in the setup wizard starts a 4.3 GB download; until it lands, alerts go to the
+    // fast detector instead of each failing with Ollama's 404.
+    [Fact]
+    public async Task FailoverVisionClient_UsesFastDetector_WhileTheOllamaModelDownloads()
+    {
+        var ollama = new FakeVisionClient("gemma4:e2b-it-qat");
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var missing = true;
+        var client = new FailoverVisionClient(
+            ollama, new FakeVisionClient("gpt-4o-mini"), fast,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama" }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions()),
+            NullLogger<FailoverVisionClient>.Instance,
+            () => missing);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.Equal(0, ollama.CallCount);
+
+        missing = false;
+        (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+        Assert.Equal("gemma4:e2b-it-qat", model);
+    }
+
+    // The detector can't answer "is the gate open", so a gate check still goes to Ollama.
+    [Fact]
+    public async Task FailoverVisionClient_GateChecksStayOnOllama_WhileItsModelDownloads()
+    {
+        var ollama = new FakeVisionClient("gemma4:e2b-it-qat");
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var client = new FailoverVisionClient(
+            ollama, new FakeVisionClient("gpt-4o-mini"), fast,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama" }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions()),
+            NullLogger<FailoverVisionClient>.Instance,
+            () => true);
+        var gateCheck = new IncomingAlert(Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GateCheckDecision.ProfileName, "image/jpeg", "check.jpg", []);
+
+        await client.AnalyzeAsync(gateCheck, MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, ollama.CallCount);
+        Assert.Equal(0, fast.CallCount);
+    }
+
     private static IncomingAlert MakeAlert() => new(
         Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
         "gate", "image/jpeg", "alert.jpg", []);

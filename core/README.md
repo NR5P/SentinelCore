@@ -19,7 +19,7 @@ The queue lets the sender receive `202 Accepted` immediately instead of waiting 
 ## Prerequisites
 
 - Ollama running on the Linux host
-- A vision model - `gemma4:e2b-it-qat` by default, downloaded automatically on first start
+- A vision model - `gemma4:e2b-it-qat` by default, downloaded automatically once Ollama is picked as the vision backend (a new install starts on the fast detector until then)
 - .NET 10 SDK
 - Whatever is sending alerts (e.g. Blue Iris) can reach the Linux host over the LAN
 
@@ -53,13 +53,13 @@ Do not expose port 5080 directly to the Internet. The API key is intended for LA
 
 Three backends can analyze an alert, and `VisionRouting` decides which one does:
 
-- **`ollama`** (default) — the local VLM named by `Ollama:Model`. Describes the scene in prose and fills in gate state, delivery company, package status. Seconds per alert.
+- **`ollama`** — the local VLM named by `Ollama:Model`. Describes the scene in prose and fills in gate state, delivery company, package status. Seconds per alert.
 - **`cloud`** — a hosted VLM, configured under `CloudVision`.
-- **`fastlocal`** — an ONNX object detector (RF-DETR Nano, ~103 MB, Apache 2.0), downloaded on first use. Milliseconds per alert, but it only reports *what* it saw, not what was happening.
+- **`fastlocal`** (a new install's default) — an ONNX object detector (RF-DETR Nano, ~103 MB, Apache 2.0), downloaded on first use. Milliseconds per alert, but it only reports *what* it saw, not what was happening.
 
 ```json
 "VisionRouting": {
-  "Primary": "ollama",
+  "Primary": "fastlocal",
   "FallbackEnabled": false,
   "EscalationEnabled": false,
   "EscalationTarget": "auto",
@@ -70,7 +70,7 @@ Three backends can analyze an alert, and `VisionRouting` decides which one does:
 
 | Key | Meaning |
 |---|---|
-| `Primary` | `ollama`, `cloud`, or `fastlocal`. Defaults to `ollama`, so an existing install behaves exactly as before with no config change. |
+| `Primary` | `ollama`, `cloud`, or `fastlocal`. A new install ships with `fastlocal`, so nothing multi-gigabyte is downloaded until someone picks a full AI in the setup wizard or Settings; the Ollama model then downloads itself, with alerts on the detector until it arrives. An existing install keeps whatever it already has. |
 | `FallbackEnabled` | If the primary's own retries are exhausted, retry once against another backend rather than failing the alert. |
 | `EscalationEnabled` | Only meaningful when `Primary` is `fastlocal`. Once the detector finds a person, vehicle, or animal, re-run the alert through a VLM for the full description. Alerts where the detector finds nothing — most of them — never reach the expensive backend, which is the point of the fast tier. |
 | `EscalationTarget` | Where escalation goes: `auto` (cloud if configured, else Ollama), `cloud`, or `ollama`. |

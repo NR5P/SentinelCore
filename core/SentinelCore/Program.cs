@@ -330,7 +330,9 @@ builder.Services.AddHttpClient(nameof(OllamaModelProvisioner), client =>
 builder.Services.AddSingleton(sp => new OllamaModelProvisioner(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(OllamaModelProvisioner)),
     sp.GetRequiredService<IOptionsMonitor<OllamaOptions>>(),
-    sp.GetRequiredService<ILogger<OllamaModelProvisioner>>()));
+    sp.GetRequiredService<ILogger<OllamaModelProvisioner>>(),
+    sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
+    sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<OllamaModelProvisioner>());
 var cloudVisionSettings = builder.Configuration.GetSection(CloudVisionOptions.SectionName).Get<CloudVisionOptions>() ?? new();
 // Only actually used when CloudVision:Provider is "openai" - that's also the slot for any other
@@ -373,7 +375,8 @@ builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionCli
     sp.GetRequiredService<FastLocalVisionClient>(),
     sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
-    sp.GetRequiredService<ILogger<FailoverVisionClient>>()));
+    sp.GetRequiredService<ILogger<FailoverVisionClient>>(),
+    () => sp.GetRequiredService<OllamaModelProvisioner>().ModelMissing));
 // All four share TClient = IAlertAction, so they must be registered with explicit, distinct
 // client names or they collapse into one - see AlertActionHttpClients for what that cost.
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();

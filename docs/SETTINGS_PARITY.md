@@ -28,6 +28,7 @@ Method: compared `core/SentinelCore.Web/wwwroot/*.js` and `SettingsSchema.cs` ag
 | 16 | **Windows: music/podcast library admin calls** (scan, refresh, status, fill, recommended) | `music.js`, `podcasts.js` | Present | Present | Missing as direct calls. The schema "scan now" / "refresh now" buttons cover the admin side. | None | Probably fine; confirm no podcast or music admin flow is stranded. | S |
 | 17 | **Kiosk-only settings** (screen sleep schedule, on-screen keyboard, TMDB search UI) | `kiosk-*.js`, `/api/kiosk/screen-sleep`, `/api/media/tmdb/search` | Kiosk fields via schema | Same | Same | n/a | Kiosk screen is web only by design. Settings fields are reachable via the schema. No action needed unless the kiosk gets a non-schema setting. | none |
 | 18 | **Exposure banner / external-access evidence** | `exposure.js`, `/api/exposure/status` | None | None | None | None | Informational banner, not a setting. Skip unless wanted. | S |
+| 19 | **Full-AI banner** (quick detection nudge, Ollama model download progress, "use the full AI" switch) | `full-ai.js`, `/api/system/full-ai`, `/api/system/full-ai/use-ollama` | None | None | None | None | Banner plus one button. The switch itself is reachable everywhere through VISION ROUTING (advanced). | S |
 
 ## Checked and already at parity
 

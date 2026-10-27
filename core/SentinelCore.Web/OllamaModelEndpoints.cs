@@ -49,6 +49,85 @@ public static class OllamaModelEndpoints
             return Results.Ok(new { options = VisionOptions(ParseModels(body!), status) });
         })
         .RequireAuthorization("AdminOnly");
+
+        // Whether alerts are getting the full AI, for the setup wizard and the dashboard's nudge
+        // banner. A new install starts on the fast detector and only downloads Ollama's model once
+        // someone picks it, so "quick" and "downloading" are ordinary states, not faults. AdminOnly:
+        // only an admin can act on any of it, and everyone else just gets no banner.
+        app.MapGet("/api/system/full-ai", async (
+            AppSettingsFile appSettings,
+            IHttpClientFactory httpClientFactory,
+            IConfiguration configuration,
+            ILogger<OllamaModelLog> logger,
+            CancellationToken ct) =>
+        {
+            var routing = await appSettings.GetSectionAsync<VisionRoutingSettingsDto>("VisionRouting", ct)
+                          ?? new VisionRoutingSettingsDto();
+            var cloud = await appSettings.GetSectionAsync<CloudVisionSettingsDto>("CloudVision", ct);
+            var cloudConfigured = cloud is { Enabled: true } && !string.IsNullOrWhiteSpace(cloud.ApiKey);
+
+            if (FullAiWithoutOllama(routing, cloudConfigured) is { } settled)
+                return Results.Ok(settled);
+
+            var (body, error) = await FetchTagsAsync(appSettings, httpClientFactory, logger, ct);
+            var status = await FetchDownloadStatusAsync(appSettings, httpClientFactory, configuration, logger, ct);
+            return Results.Ok(FullAiState(routing.Primary, error is null ? ParseModels(body!) : null, status));
+        })
+        .RequireAuthorization("AdminOnly");
+
+        // The banner's "use the full AI" button. VISION ROUTING is an advanced-mode section, so
+        // sending someone there to change one dropdown would mostly send them to a page without
+        // it. Only Primary is written - PUT /vision-routing writes every field of its DTO, defaults
+        // included - so thresholds and escalation settings someone already chose stay as they were.
+        app.MapPost("/api/system/full-ai/use-ollama", async (AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            await appSettings.MergeSectionAsync("VisionRouting", new { Primary = "ollama" }, ct);
+            return Results.Ok(new { primary = "ollama" });
+        })
+        .RequireAuthorization("AdminOnly");
+    }
+
+    // state: "quick" (fast detector only), "downloading", "download-failed", "ollama-unreachable"
+    // or "full". Percent and Error only mean something while downloading / after a failure.
+    public sealed record FullAiStatus(string State, string Primary, string? Model, int Percent, string? Error);
+
+    // The answer when Ollama's state doesn't matter, or null when it does - i.e. when the full
+    // analysis comes from Ollama: as the primary, or as the escalation target of the fast detector.
+    // Fast detector with escalation to cloud is full AI on every alert that has something in it,
+    // so that is "full", not "quick". Mirrors FailoverVisionClient's escalation target rules.
+    public static FullAiStatus? FullAiWithoutOllama(VisionRoutingSettingsDto routing, bool cloudConfigured)
+    {
+        var primary = routing.Primary;
+        if (primary == "cloud")
+            return new FullAiStatus("full", primary, null, 100, null);
+        if (primary != "fastlocal")
+            return null;
+        if (!routing.EscalationEnabled)
+            return new FullAiStatus("quick", primary, null, 0, null);
+        var escalatesToCloud = routing.EscalationTarget == "cloud" || (routing.EscalationTarget == "auto" && cloudConfigured);
+        return escalatesToCloud ? new FullAiStatus("full", primary, null, 100, null) : null;
+    }
+
+    // Public so the decision can be tested without Ollama or the main app. `installed` is null when
+    // Ollama couldn't be reached. Between the routing change landing and the main app's first pull
+    // update there is a moment where the model is absent but nothing is downloading yet - that is
+    // reported as downloading at 0%, since the pull is about to start.
+    public static FullAiStatus FullAiState(string primary, List<SettingsFieldOption>? installed, OllamaModelStatus? status)
+    {
+        var model = status?.Configured;
+        if (installed is null)
+            return new FullAiStatus("ollama-unreachable", primary, model, 0, null);
+
+        if (status?.Download is { } download)
+            return download.Error is null
+                ? new FullAiStatus("downloading", primary, download.Model, download.Percent, null)
+                : new FullAiStatus("download-failed", primary, download.Model, download.Percent, download.Error);
+
+        if (model is not null && status!.Active is null &&
+            !installed.Any(o => OllamaModelProvisioner.IsSameModel(o.Value, model)))
+            return new FullAiStatus("downloading", primary, model, 0, null);
+
+        return new FullAiStatus("full", primary, status?.Active ?? model, 100, null);
     }
 
     // Vision models worth offering on a machine with no GPU, fastest first. Measured on an i7-6700

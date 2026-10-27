@@ -95,6 +95,61 @@ body {
   display: none;
 }
 
+/* The full-AI nudge (full-ai.js): amber like the licence notice while it is a suggestion or a
+   download in progress, red when Ollama is meant to be doing the work and can't. */
+.full-ai-banner {
+  padding: 8px 28px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-align: center;
+  line-height: 1.5;
+  color: var(--amber);
+  background: rgba(255, 181, 69, 0.08);
+  border-bottom: 1px solid var(--amber);
+}
+
+.full-ai-banner-bad {
+  color: var(--red);
+  background: rgba(255, 77, 94, 0.1);
+  border-bottom-color: var(--red);
+}
+
+.full-ai-banner.hidden {
+  display: none;
+}
+
+.full-ai-banner-btn {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* The setup wizard's vision choices - one radio card per option. */
+.wizard-choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.wizard-choice:has(input:checked) {
+  border-color: var(--green);
+}
+
+.wizard-choice input {
+  margin-top: 4px;
+}
+
 /* Unlicensed watermark - toggled by license.js adding/removing body.unlicensed based on
    /api/license/status. Purely cosmetic (pointer-events: none) - never blocks viewing or
    interacting with anything underneath, matching the "nag, never gate" rule everywhere else
@@ -1765,6 +1820,7 @@ main {
 body.hub-wall .topbar,
 body.hub-wall .exposure-banner,
 body.hub-wall .license-banner,
+body.hub-wall .full-ai-banner,
 body.hub-wall .app-footer {
   display: none;
 }
@@ -2540,6 +2596,26 @@ body.hub-wall main {
 .wizard-hint {
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* The full AI model's download on the wizard's FINISH step. */
+.wizard-progress {
+  height: 6px;
+  margin-top: 8px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.wizard-progress.hidden {
+  display: none;
+}
+
+.wizard-progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--green);
+  transition: width 0.4s ease;
 }
 
 .wizard-status-ok {

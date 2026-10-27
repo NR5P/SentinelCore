@@ -112,7 +112,7 @@ describe_dependency() {
     ffmpeg) echo "ffmpeg - required for live view, trigger zones and clip recording" ;;
     go2rtc) echo "go2rtc - real-time live view (without it live video runs a few seconds behind)" ;;
     node)   echo "Node.js 22+ - only for Apple HomeKit support; skippable" ;;
-    ollama) echo "Ollama - local AI vision. Skippable if you'll use a cloud model instead (SKIP_OLLAMA=1)" ;;
+    ollama) echo "Ollama - runs the full local AI. Its model (~4.3 GB) only downloads if you pick it during setup. Skippable (SKIP_OLLAMA=1)" ;;
   esac
 }
 
@@ -162,8 +162,8 @@ fi
 if [[ "${SKIP_OLLAMA:-0}" == "1" ]]; then
   echo "Skipping Ollama (SKIP_OLLAMA=1) - pick a cloud vision provider in the setup wizard."
 elif ! command -v ollama >/dev/null 2>&1; then
-  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma4:e2b-it-qat'," >&2
-  echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
+  echo "NOTE: Ollama is not installed. Alerts use the fast local detector until you set up a full AI -" >&2
+  echo "      install Ollama (https://ollama.com) and pick it in the setup wizard, or pick a cloud provider." >&2
 else
   # Ollama runs llama.cpp's llama-server, whose RAM prompt cache defaults to 8 GB. Camera images
   # never hit it, so it grows ~400 MB per alert until a 16 GB box runs out of memory every few
@@ -176,11 +176,9 @@ else
     systemctl daemon-reload
     systemctl restart ollama
   fi
-  for _ in $(seq 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
-  if ! ollama list 2>/dev/null | grep -q '^gemma4:e2b-it-qat'; then
-    echo "==> Downloading the gemma4:e2b-it-qat vision model (about 4.3 GB)"
-    ollama pull gemma4:e2b-it-qat || echo "WARNING: 'ollama pull gemma4:e2b-it-qat' failed - run it by hand before the first alert." >&2
-  fi
+  # No model is pulled here. A new install starts on the fast local detector, and the 4.3 GB
+  # vision model is downloaded by the app itself the moment someone picks Ollama in the setup
+  # wizard or Settings (OllamaModelProvisioner) - so a machine that never uses it never pays for it.
 fi
 
 NODE_PATH=""

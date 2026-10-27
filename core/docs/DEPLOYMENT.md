@@ -84,8 +84,8 @@ you'd rather do it by hand.
   both on one machine avoids needing a second box. See [section 8b](#8b-windows) for what
   differs there, and [section 8c](#8c-macos) for macOS.
 - **.NET 10 SDK**
-- **Ollama**, running locally, with a vision-capable model (default `gemma4:e2b-it-qat`, downloaded automatically) -
-  required for the default configuration. An offsite Cloud Vision backend (OpenAI, Anthropic, or
+- **Ollama**, running locally, with a vision-capable model (default `gemma4:e2b-it-qat`, downloaded automatically once
+  Ollama is picked as the vision backend) - recommended. A new install runs on the fast local detector until then. An offsite Cloud Vision backend (OpenAI, Anthropic, or
   Google) can be used
   instead, or as an automatic fallback, with no local install of its own - just an API key in
   Settings. See the User Guide's
@@ -143,8 +143,10 @@ camera alert carries a different image, so the cache never gets a hit - it just 
 400 MB per alert until the model (~4 GB) plus a full cache (~8 GB) runs a 16 GB box out of
 memory every few hours. Turning it off costs nothing for this app.
 
-`install-linux.sh`, `install-windows.ps1` and the release-bundle installers set this up (and pull
-`gemma4:e2b-it-qat` if it's missing) whenever Ollama is present.
+`install-linux.sh`, `install-windows.ps1` and the release-bundle installers set this up whenever
+Ollama is present. The two from-source installers also pull `gemma4:e2b-it-qat` if it's missing;
+the release-bundle installers don't - the app downloads it itself once Ollama is picked in the
+setup wizard or Settings.
 To do it by hand:
 
 - **Linux** - once you have the code (section 3):
@@ -1575,7 +1577,10 @@ are never staged.
      prompt
 3. Open the dashboard at the address the installer prints when it finishes, create the admin
    account it asks for, and go through the setup wizard (API key, vision backend, cameras,
-   notifications).
+   notifications). The installer doesn't download the 4.3 GB Ollama model: picking Ollama in the
+   wizard's vision step does, in the background, and alerts use the fast local detector until it
+   finishes. Skipping that step leaves the install on the fast detector, and a banner on the
+   dashboard offers the full AI later.
 
 This installs the same three services (bridge, dashboard, optional HomeKit sidecar) under the
 same service manager as sections 8/8b/8c — systemd, Windows Services, or launchd — just pointed
