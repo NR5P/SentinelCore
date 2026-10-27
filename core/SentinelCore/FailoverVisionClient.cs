@@ -22,6 +22,12 @@ namespace SentinelCore;
 // below the floor is rewritten to claim no subject (see WithoutVisibleSubject) so that "the model
 // couldn't tell" stops reading downstream as "the model saw someone".
 //
+// And one for an Ollama primary whose model is still downloading (ollamaModelMissing - see
+// OllamaModelProvisioner.ModelMissing): alerts go to the fast detector until it arrives, rather
+// than every one failing with Ollama's 404. That is the normal state for a while after someone
+// picks Ollama in the setup wizard, since a fresh install no longer pulls the model up front.
+// Gate checks still go to Ollama - the detector can't answer them, so there is nothing to gain.
+//
 // Takes the backends as IVisionAnalysisClient (not the concrete types) purely so tests can
 // substitute fakes - the DI registration in Program.cs resolves the concrete singletons
 // explicitly and passes them in, since this is the only thing in the container registered as
@@ -32,7 +38,8 @@ public sealed class FailoverVisionClient(
     IVisionAnalysisClient fastLocal,
     IOptionsMonitor<VisionRoutingOptions> routingOptions,
     IOptionsMonitor<CloudVisionOptions> cloudOptions,
-    ILogger<FailoverVisionClient> logger) : IVisionAnalysisClient
+    ILogger<FailoverVisionClient> logger,
+    Func<bool>? ollamaModelMissing = null) : IVisionAnalysisClient
 {
     public async Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
         IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken)
@@ -281,6 +288,9 @@ public sealed class FailoverVisionClient(
         var primaryIsCloud = string.Equals(routing.Primary, "cloud", StringComparison.OrdinalIgnoreCase);
         var primaryIsFastLocal = string.Equals(routing.Primary, "fastlocal", StringComparison.OrdinalIgnoreCase);
         var cloudName = CloudProviderName(cloudSettings.Provider);
+
+        if (includeFastLocal && !primaryIsCloud && !primaryIsFastLocal && ollamaModelMissing?.Invoke() == true)
+            return (fastLocal, null, "FastLocal", null);
 
         if (primaryIsFastLocal)
         {

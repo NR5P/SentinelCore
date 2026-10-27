@@ -2837,6 +2837,10 @@ window.GateWatchSettings = (function () {
         if (endpoint === "/api/settings/media") window.GateWatchAuth.checkMovies();
         // Same for the Music and Podcasts tabs.
         if ((endpoint === "/api/settings/music" || endpoint === "/api/settings/podcasts") && window.SentinelAudio) window.SentinelAudio.checkEnabled();
+        // The full-AI banner reflects routing and the Ollama model - re-check once the main app
+        // has picked the new settings up.
+        if (["/api/settings/vision-routing", "/api/settings/ollama", "/api/settings/cloud-vision"].includes(endpoint))
+          setTimeout(() => window.GateWatchFullAi?.check(), 1500);
       }
     } catch {
       showFieldErrors(errorsEl, ["Network error while saving."]);

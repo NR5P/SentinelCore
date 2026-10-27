@@ -144,6 +144,93 @@ public sealed class OllamaModelProvisionerTests
         Assert.Equal("gemma3:4b", sent.RootElement.GetProperty("model").GetString());
     }
 
+    // A fresh install runs on the fast detector: nothing is downloaded until routing points at
+    // Ollama, and then the routing change alone starts the pull.
+    [Fact]
+    public async Task NothingIsDownloaded_UntilRoutingUsesOllama()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var options = new ChangingOptions(new OllamaOptions { Model = "gemma4:e2b-it-qat" });
+        var routing = new ChangingOptions<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "fastlocal" });
+        var cloud = new ChangingOptions<CloudVisionOptions>(new CloudVisionOptions());
+        var ollama = new FakeOllama();
+        using var http = new HttpClient(ollama) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var provisioner = new OllamaModelProvisioner(http, options, NullLogger<OllamaModelProvisioner>.Instance, routing, cloud);
+
+        await provisioner.StartAsync(ct);
+        await Task.Delay(200, ct);
+        Assert.Null(provisioner.Status.Download);
+        Assert.False(provisioner.Status.InUse);
+        Assert.False(provisioner.ModelMissing);
+
+        routing.Set(new VisionRoutingOptions { Primary = "ollama" });
+        await WaitFor(() => provisioner.Status.Download?.Percent == 50, ct);
+        Assert.True(provisioner.ModelMissing);
+
+        ollama.FinishPull();
+        await WaitFor(() => provisioner.Status.Active == "gemma4:e2b-it-qat", ct);
+        Assert.False(provisioner.ModelMissing);
+
+        await provisioner.StopAsync(ct);
+    }
+
+    [Theory]
+    [InlineData("ollama", false, false, "auto", false, true)]
+    [InlineData("fastlocal", false, false, "auto", false, false)]
+    // Fallback from the detector goes to Ollama without cloud (and for bypassed cameras with it).
+    [InlineData("fastlocal", true, false, "auto", false, true)]
+    // Escalation: "auto" means cloud when it's configured, Ollama otherwise.
+    [InlineData("fastlocal", false, true, "auto", false, true)]
+    [InlineData("fastlocal", false, true, "auto", true, false)]
+    [InlineData("fastlocal", false, true, "cloud", false, false)]
+    [InlineData("fastlocal", false, true, "ollama", true, true)]
+    // A cloud primary only reaches Ollama when misconfigured or falling back.
+    [InlineData("cloud", false, false, "auto", true, false)]
+    [InlineData("cloud", true, false, "auto", true, true)]
+    [InlineData("cloud", false, false, "auto", false, true)]
+    public void OllamaInUse_FollowsTheRouting(
+        string primary, bool fallback, bool escalation, string target, bool cloudConfigured, bool expected)
+    {
+        var routing = new VisionRoutingOptions
+        {
+            Primary = primary, FallbackEnabled = fallback, EscalationEnabled = escalation, EscalationTarget = target
+        };
+        var cloud = cloudConfigured ? new CloudVisionOptions { Enabled = true, ApiKey = "key" } : new CloudVisionOptions();
+
+        Assert.Equal(expected, OllamaModelProvisioner.OllamaInUse(routing, cloud));
+    }
+
+    // The dashboard banner: quick detection, a download in progress, a failed one, Ollama down, or fine.
+    [Fact]
+    public void FullAiState_DescribesEachStage()
+    {
+        Assert.Equal("quick", OllamaModelEndpoints.FullAiWithoutOllama(new VisionRoutingSettingsDto { Primary = "fastlocal" }, false)!.State);
+        Assert.Equal("full", OllamaModelEndpoints.FullAiWithoutOllama(new VisionRoutingSettingsDto { Primary = "cloud" }, true)!.State);
+        Assert.Equal("full", OllamaModelEndpoints.FullAiWithoutOllama(
+            new VisionRoutingSettingsDto { Primary = "fastlocal", EscalationEnabled = true }, true)!.State);
+        Assert.Null(OllamaModelEndpoints.FullAiWithoutOllama(
+            new VisionRoutingSettingsDto { Primary = "fastlocal", EscalationEnabled = true }, false));
+        Assert.Null(OllamaModelEndpoints.FullAiWithoutOllama(new VisionRoutingSettingsDto { Primary = "ollama" }, true));
+
+        Assert.Equal("ollama-unreachable", OllamaModelEndpoints.FullAiState("ollama", null, null).State);
+
+        // The routing change has landed but the main app hasn't started pulling yet.
+        var pending = OllamaModelEndpoints.FullAiState("ollama", [], new OllamaModelStatus("gemma4:e2b-it-qat", null, null));
+        Assert.Equal(("downloading", 0), (pending.State, pending.Percent));
+
+        var downloading = OllamaModelEndpoints.FullAiState("ollama", [],
+            new OllamaModelStatus("gemma4:e2b-it-qat", null, new OllamaModelDownload("gemma4:e2b-it-qat", 37, null)));
+        Assert.Equal(("downloading", 37), (downloading.State, downloading.Percent));
+
+        var failed = OllamaModelEndpoints.FullAiState("ollama", [],
+            new OllamaModelStatus("gemma4:e2b-it-qat", null, new OllamaModelDownload("gemma4:e2b-it-qat", 12, "disk full")));
+        Assert.Equal(("download-failed", "disk full"), (failed.State, failed.Error));
+
+        var full = OllamaModelEndpoints.FullAiState("ollama", [new("gemma4:e2b-it-qat", "gemma4:e2b-it-qat - 4.3 GB")],
+            new OllamaModelStatus("gemma4:e2b-it-qat", "gemma4:e2b-it-qat", null));
+        Assert.Equal("full", full.State);
+    }
+
     private static async Task WaitFor(Func<bool> condition, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);

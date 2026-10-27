@@ -83,7 +83,7 @@ function Test-Command { param([string] $Name) [bool](Get-Command $Name -ErrorAct
 $dependencies = @(
     @{ Name = 'ffmpeg'; WingetId = 'Gyan.FFmpeg';       Description = 'ffmpeg - required for live view, trigger zones and clip recording' }
     @{ Name = 'node';   WingetId = 'OpenJS.NodeJS.LTS'; Description = 'Node.js 22+ - only for Apple HomeKit support; skippable' }
-    @{ Name = 'ollama'; WingetId = 'Ollama.Ollama';     Description = 'Ollama - local AI vision. Skippable if you use a cloud model instead' }
+    @{ Name = 'ollama'; WingetId = 'Ollama.Ollama';     Description = 'Ollama - runs the full local AI. Its model (~4.3 GB) only downloads if you pick it during setup. Skippable' }
 )
 
 $missing = @($dependencies | Where-Object { -not (Test-Command $_.Name) })
@@ -121,8 +121,8 @@ if ($missing.Count -gt 0) {
 
 if (-not (Test-Command 'ffmpeg')) { Write-Warn "ffmpeg is not installed. Live view, trigger zones and clip recording won't work." }
 if (-not (Test-Command 'ollama')) {
-    Write-Warn "Ollama is not installed. Either install it and run 'ollama pull gemma4:e2b-it-qat',"
-    Write-Warn "or configure a cloud vision provider in the dashboard's setup wizard."
+    Write-Warn "Ollama is not installed. Alerts use the fast local detector until you set up a full AI -"
+    Write-Warn "install Ollama (https://ollama.com) and pick it in the setup wizard, or pick a cloud provider."
 } else {
     # llama-server's RAM prompt cache defaults to 8 GB and never hits on camera images, so it grows
     # until the machine runs out of memory - see docs/DEPLOYMENT.md. Ollama reads the machine
@@ -132,11 +132,9 @@ if (-not (Test-Command 'ollama')) {
         Write-Host "==> Turning off Ollama's RAM prompt cache (takes effect when Ollama next starts)"
         [Environment]::SetEnvironmentVariable('LLAMA_ARG_CACHE_RAM', '0', 'Machine')
     }
-    if (-not ((& ollama list 2>$null) -match '^gemma4:e2b-it-qat')) {
-        Write-Host "==> Downloading the gemma4:e2b-it-qat vision model (about 4.3 GB)"
-        & ollama pull gemma4:e2b-it-qat
-        if ($LASTEXITCODE -ne 0) { Write-Warn "'ollama pull gemma4:e2b-it-qat' failed - run it by hand before the first alert." }
-    }
+    # No model is pulled here: a new install starts on the fast local detector, and the app
+    # downloads the 4.3 GB vision model itself once someone picks Ollama in the setup wizard or
+    # Settings (OllamaModelProvisioner).
 }
 
 $nodePath = $null

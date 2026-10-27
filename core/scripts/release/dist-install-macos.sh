@@ -81,7 +81,7 @@ describe_dependency() {
   case "$1" in
     ffmpeg) echo "ffmpeg - required for live view, trigger zones and clip recording" ;;
     node)   echo "Node.js 22+ - only for Apple HomeKit support; skippable" ;;
-    ollama) echo "Ollama - local AI vision. Skippable if you'll use a cloud model instead" ;;
+    ollama) echo "Ollama - runs the full local AI. Its model (~4.3 GB) only downloads if you pick it during setup. Skippable" ;;
   esac
 }
 
@@ -111,8 +111,8 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "WARNING: ffmpeg is not installed. Live view, trigger zones and clip recording won't work." >&2
 fi
 if ! command -v ollama >/dev/null 2>&1; then
-  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma4:e2b-it-qat'," >&2
-  echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
+  echo "NOTE: Ollama is not installed. Alerts use the fast local detector until you set up a full AI -" >&2
+  echo "      install Ollama (https://ollama.com) and pick it in the setup wizard, or pick a cloud provider." >&2
 fi
 
 NODE_PATH=""

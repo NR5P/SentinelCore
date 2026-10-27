@@ -55,21 +55,37 @@ window.GateWatchWizard = (function () {
       }
     },
     {
+      // A new install starts on the fast detector (VisionRouting:Primary "fastlocal") and has no
+      // Ollama model downloaded, so skipping this step leaves alerts on quick detection. Picking
+      // Ollama here is what downloads its model - the main app's OllamaModelProvisioner starts the
+      // pull as soon as the routing change lands, and alerts stay on the detector until it's done.
       id: "vision",
       title: "VISION BACKEND",
       skippable: true,
       render() {
         bodyEl.innerHTML = `
-          <p>Which AI actually looks at each snapshot. Ollama runs locally and free but
-          needs real hardware; a cloud provider works on any machine but costs a little
-          per alert and needs an API key.</p>
-          <div class="field-row field-row-wide">
-            <label class="field-label">Backend</label>
-            <select id="wizard-vision-backend" class="field-input">
-              <option value="ollama">Ollama (local)</option>
-              <option value="cloud">Cloud Vision</option>
-            </select>
-          </div>
+          <p>Which AI looks at each snapshot. The full AI tells you what is actually happening -
+          "delivery driver leaving a package at the gate" instead of just "person" - and is what
+          makes alerts worth reading.</p>
+          <label class="wizard-choice">
+            <input type="radio" name="wizard-vision-backend" value="ollama" checked />
+            <span><strong>Full AI on this machine (Ollama) - recommended</strong><br />
+            Free and private. Downloads a 4.3 GB model in the background; alerts use quick
+            detection until it finishes. Slow on a machine without a graphics card.</span>
+          </label>
+          <label class="wizard-choice">
+            <input type="radio" name="wizard-vision-backend" value="cloud" />
+            <span><strong>Full AI in the cloud</strong><br />
+            The same detailed descriptions on any hardware. Costs a little per alert and needs an
+            API key.</span>
+          </label>
+          <label class="wizard-choice">
+            <input type="radio" name="wizard-vision-backend" value="fastlocal" />
+            <span><strong>Quick detection only</strong><br />
+            Just "person", "vehicle" or "animal" - fast on anything, but no descriptions, and
+            gate/door open checks won't work. This is what skipping gives you; you can switch to
+            the full AI any time in SETTINGS.</span>
+          </label>
           <div id="wizard-cloud-fields" class="hidden">
             <div class="field-row field-row-wide">
               <label class="field-label">Provider</label>
@@ -87,17 +103,18 @@ window.GateWatchWizard = (function () {
               <label class="field-label">Model</label>
               <input type="text" id="wizard-cloud-model" class="field-input" placeholder="e.g. gpt-4o-mini" />
             </div>
-          </div>
-          <div class="wizard-actions">
-            <button type="button" class="btn" id="wizard-test-connection-btn">test connection</button>
-            <span id="wizard-connection-result"></span>
+            <div class="wizard-actions">
+              <button type="button" class="btn" id="wizard-test-connection-btn">test connection</button>
+              <span id="wizard-connection-result"></span>
+            </div>
           </div>`;
 
-        const backendSelect = document.getElementById("wizard-vision-backend");
         const cloudFields = document.getElementById("wizard-cloud-fields");
-        backendSelect.addEventListener("change", () => {
-          cloudFields.classList.toggle("hidden", backendSelect.value !== "cloud");
-        });
+        for (const radio of bodyEl.querySelectorAll('input[name="wizard-vision-backend"]')) {
+          radio.addEventListener("change", () => {
+            cloudFields.classList.toggle("hidden", selectedBackend() !== "cloud");
+          });
+        }
 
         document.getElementById("wizard-test-connection-btn").addEventListener("click", async () => {
           const resultEl = document.getElementById("wizard-connection-result");
@@ -115,7 +132,23 @@ window.GateWatchWizard = (function () {
         });
       },
       async onNext() {
-        return saveVisionFields();
+        if (!(await saveVisionFields())) return false;
+        if (selectedBackend() !== "ollama") return true;
+
+        // Ollama itself has to be there to download into. The installers set it up unless it was
+        // skipped; if it's missing, go back to quick detection rather than leave alerts pointed
+        // at a server that isn't running.
+        const status = await fullAiStatus();
+        if (status?.state === "ollama-unreachable") {
+          await put("/api/settings/vision-routing", { primary: "fastlocal", fallbackEnabled: false });
+          showErrors([
+            "Ollama isn't running on this machine, so the full AI can't be downloaded yet. Install it " +
+            "from ollama.com (or re-run the installer and say yes to Ollama), then pick it in SETTINGS -> " +
+            "VISION ROUTING. For now you can choose the cloud option or quick detection."
+          ]);
+          return false;
+        }
+        return true;
       }
     },
     {
@@ -271,15 +304,77 @@ window.GateWatchWizard = (function () {
       title: "FINISH",
       render() {
         bodyEl.innerHTML = `<p>That's the essentials. Everything else - prompt profiles,
-          trigger zones, quiet hours, MQTT, and more - is in SETTINGS whenever you want it.</p>`;
+          trigger zones, quiet hours, MQTT, and more - is in SETTINGS whenever you want it.</p>
+          <div id="wizard-full-ai" class="hidden">
+            <p id="wizard-full-ai-note"></p>
+            <div id="wizard-full-ai-bar" class="wizard-progress hidden"><div class="wizard-progress-fill"></div></div>
+          </div>`;
+        showFullAiProgress(false);
       }
     }
   ];
 
+  // FINISH deliberately doesn't wait for the Ollama model: a 4.3 GB pull can take an hour on a slow
+  // line, it carries on server-side whatever this page does, and alerts are on quick detection
+  // meanwhile. So this shows it live for anyone who wants to watch, and says plainly that leaving
+  // is fine. Polls only while a download is running and only while FINISH is on screen.
+  let fullAiPoll = null;
+
+  async function showFullAiProgress(wasDownloading) {
+    clearTimeout(fullAiPoll);
+    const status = await fullAiStatus();
+    const box = document.getElementById("wizard-full-ai");
+    if (!box || !status) return;
+    const note = document.getElementById("wizard-full-ai-note");
+    const bar = document.getElementById("wizard-full-ai-bar");
+    note.className = "wizard-hint";
+    bar.classList.add("hidden");
+
+    if (status.state === "downloading") {
+      note.textContent = `Downloading the full AI (${status.model}) - ${status.percent}%. You can finish and ` +
+        "close this - it keeps downloading. Alerts use quick detection until it's done, then switch over " +
+        "automatically.";
+      bar.firstElementChild.style.width = `${status.percent}%`;
+      bar.classList.remove("hidden");
+      fullAiPoll = setTimeout(() => showFullAiProgress(true), 3000);
+    } else if (status.state === "full" && status.primary === "ollama") {
+      // Either it finished while this was on screen, or it was already pulled - by an older
+      // installer or a previous run of this wizard. Said out loud either way, or picking Ollama
+      // looks like it did nothing.
+      note.textContent = wasDownloading
+        ? `Full AI ready (${status.model}) - alerts use it from now on.`
+        : `The full AI (${status.model}) was already downloaded on this machine, so alerts use it from now on.`;
+      note.className = "wizard-status-ok";
+    } else if (status.state === "download-failed") {
+      note.textContent = `The full AI didn't download (${status.error}). It retries every 10 minutes on its ` +
+        "own, and alerts use quick detection meanwhile - the banner at the top shows how it's going.";
+      note.className = "wizard-status-bad";
+    } else if (status.state === "quick") {
+      note.textContent = "Alerts are on quick detection. For full descriptions, use the banner at the top " +
+        "of the dashboard to switch to the full AI whenever you're ready.";
+    } else {
+      return;
+    }
+    box.classList.remove("hidden");
+  }
+
+  function selectedBackend() {
+    return bodyEl.querySelector('input[name="wizard-vision-backend"]:checked')?.value ?? "ollama";
+  }
+
+  async function fullAiStatus() {
+    try {
+      const response = await fetch("/api/system/full-ai");
+      return response.ok ? await response.json() : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function saveVisionFields() {
-    const backend = document.getElementById("wizard-vision-backend").value;
+    const backend = selectedBackend();
     const routingOk = await put("/api/settings/vision-routing", {
-      primary: backend === "cloud" ? "cloud" : "ollama",
+      primary: backend,
       fallbackEnabled: false
     });
     if (backend !== "cloud") return routingOk;
@@ -347,6 +442,7 @@ window.GateWatchWizard = (function () {
   }
 
   async function renderStep() {
+    clearTimeout(fullAiPoll);
     errorsEl.innerHTML = "";
     const step = STEPS[stepIndex];
     titleEl.textContent = step.title;
@@ -370,6 +466,7 @@ window.GateWatchWizard = (function () {
 
   async function advance() {
     if (stepIndex === STEPS.length - 1) {
+      clearTimeout(fullAiPoll);
       await fetch("/api/setup/complete", { method: "POST" });
       overlay.classList.add("hidden");
       window.location.reload();
