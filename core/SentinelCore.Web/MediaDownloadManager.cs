@@ -158,6 +158,14 @@ public sealed class MediaDownloadManager(
                     _appliedVpnKey = null;
                     lastProblem = "This server's key had been removed from your Mullvad account; a new one is registered on the next try.";
                 }
+                else if (lastProblem != LeakMessage && await vpnConfig.SwitchMullvadRelayAsync(cancellationToken) is { } relay)
+                {
+                    // The saved Mullvad server is down. The tunnel keeps retrying the old one
+                    // until it is stopped, so stop it: the next try configures and starts afresh.
+                    _appliedVpnKey = null;
+                    await stack.StopAsync(cancellationToken);
+                    lastProblem = $"The Mullvad server did not answer, so this server has moved to {relay}. Try again.";
+                }
             }
             throw new MediaDownloadException(lastProblem ?? "The download services did not come up.");
         }

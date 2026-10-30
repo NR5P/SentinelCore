@@ -192,7 +192,9 @@ public sealed class OrganizerAutomationTests : IDisposable
     [Fact]
     public async Task ScheduledCard_AppearsWhenDue_AndOnlyOnce()
     {
-        var bench = await NewBenchAsync();
+        // A fixed mid-month date: from the real clock, the day before a DST change makes "the same
+        // time tomorrow" 23 or 25 hours away (failed on 2026-10-30, two days before Nov 1).
+        var bench = await NewBenchAsync(new DateTimeOffset(2026, 9, 15, 15, 0, 0, TimeSpan.Zero));
         await bench.Engine.SaveAsync(EggsEveryMorning(), Ct);
         var due = (await bench.Automations.GetAsync("eggs", Ct))!.NextRunAt!.Value;
 

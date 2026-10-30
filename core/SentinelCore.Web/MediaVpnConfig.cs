@@ -228,13 +228,42 @@ public sealed partial class MediaVpnConfig(IHttpClientFactory httpClientFactory,
         return Str(document.RootElement, "access_token") ?? throw new MediaDownloadException("Mullvad did not sign this server in.");
     }
 
-    private async Task PickRelayAsync(MullvadState state, string location, CancellationToken cancellationToken)
+    // Called when the tunnel will not come up although the device is still on the account: the
+    // saved server is most likely down (Mullvad can list a server as active while it answers
+    // nothing - se-sto-wg-205/207/208 on 2026-10-30). Moves to another one at the same location,
+    // never back to one that already failed until every server there has. The next start uses it.
+    public async Task<string?> SwitchMullvadRelayAsync(CancellationToken cancellationToken)
+    {
+        var state = ReadState();
+        if (state is null || state.Location.Length == 0) return null;
+        var failed = _failedRelays.GetOrAdd(state.Location, _ => []);
+        lock (failed) if (state.RelayHostname.Length > 0) failed.Add(state.RelayHostname);
+        var previous = state.RelayHostname;
+        try { await PickRelayAsync(state, state.Location, cancellationToken, failed); }
+        catch (Exception ex) when (ex is HttpRequestException or MediaDownloadException or JsonException) { return null; }
+        WriteState(state);
+        logger.LogWarning("Movie downloads: Mullvad server {Old} did not answer; switching to {New}", previous, state.RelayHostname);
+        return state.RelayHostname;
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HashSet<string>> _failedRelays = new();
+
+    private async Task PickRelayAsync(MullvadState state, string location, CancellationToken cancellationToken, HashSet<string>? avoid = null)
     {
         var relays = await RelaysAsync(cancellationToken);
         var matching = relays.Relays
             .Where(r => r.Active && (r.Location == location || r.Location.StartsWith(location + "-", StringComparison.Ordinal)))
             .ToList();
         if (matching.Count == 0) throw new MediaDownloadException($"Mullvad has no WireGuard servers at \"{location}\" right now. Pick another location.");
+        if (avoid is not null)
+        {
+            // Every server here has failed once: start the round again rather than give up.
+            lock (avoid)
+            {
+                if (matching.All(r => avoid.Contains(r.Hostname))) avoid.Clear();
+                matching = matching.Where(r => !avoid.Contains(r.Hostname)).ToList();
+            }
+        }
         // Mullvad's own servers first (not rented), then any one of them, so the household does
         // not all land on the same machine.
         var pool = matching.Any(r => r.Owned) ? matching.Where(r => r.Owned).ToList() : matching;

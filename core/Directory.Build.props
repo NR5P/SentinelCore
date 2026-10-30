@@ -63,10 +63,11 @@
     </PropertyGroup>
   </Target>
 
-  <!-- Five SixLabors.ImageSharp 3.1.12 advisories (2026-10) whose only fix is 4.x - which needs a
+  <!-- Six SixLabors.ImageSharp 3.1.12 advisories (2026-10) whose only fix is 3.2/4.x - which need a
        paid Six Labors license key just to compile in Release, for this project and for anyone
        building it from source. Every one is unreachable here instead: SafeImageDecoding
-       registers no TIFF decoder (closing the BigTIFF loop and the TIFF-only histogram crash),
+       registers no TIFF decoder (closing the BigTIFF loop, the TIFF-only histogram crash and the
+       tiled fax TIFF overflow, GHSA-v76p),
        nothing encodes TIFF (the two encoder overflows), and nothing reads IccProfile.Entries,
        the only 3.x route to the ICC CLUT allocation. Suppressed by advisory URL, not by NU190x
        code, so any NEW advisory still fails the build. Revisit if any of that stops being true. -->
@@ -76,6 +77,7 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-gwg2-r3hj-4w44" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-wmxv-xphr-5c9g" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-v76p-62qx-wwq2" />
   </ItemGroup>
 
 </Project>
