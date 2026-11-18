@@ -144,8 +144,13 @@ public sealed record AiSlowdownWarning(string Key, string Subject, string Text);
 //    slowdownFactor times its median over the rest of the week. A median, so one 500 s outlier
 //    (a model reload after Ollama restarted) does not count; five in a row slowing down does.
 //  - close to giving up: any of those last analyses took timeoutPercent of Ollama's
-//    RequestTimeoutSeconds. Past 100% the request is cancelled and the alert fails outright. Timed
-//    on the AI's own seconds where Ollama reported them, since the timeout does not see the queue.
+//    RequestTimeoutSeconds. Past 100% the request is cancelled and the alert fails outright.
+// Both are timed on the AI's own seconds (AiSeconds), so only analyses Ollama reported a breakdown
+// for count. Everything else - the fast-local detector, cloud models, rows from before the
+// breakdown existed - has only arrival-to-answer time, which is mostly time spent queued behind a
+// two-minute Ollama run: on the box that read as a 0.2 s detector being "178x slower than normal"
+// and "close to timing out" (it has no timeout), a week of false alarms (Nov 2026). A backed-up
+// queue has its own SELF-MONITORING warning in the main app.
 // Each model is judged only against itself - gemma3:4b and a 0.3 s fast-local detector have
 // nothing to say about each other - and only while it is in use: a model whose newest analysis is
 // older than ActiveWithin is not current, and its last five would otherwise sit there forever.
@@ -167,17 +172,18 @@ public static class AiSlowdownRule
         var warnings = new List<AiSlowdownWarning>();
         var weekStart = now - AiSpeedStats.Week;
         foreach (var model in rows
-                     .Where(r => r.Seconds is not null && r.ReceivedAt >= weekStart)
+                     .Where(r => r.Seconds is not null && r.ReceivedAt >= weekStart
+                                 && (r.ModelLoadSeconds is not null || r.PromptSeconds is not null || r.ResponseSeconds is not null))
                      .GroupBy(r => r.Model, StringComparer.Ordinal))
         {
             var newestFirst = model.OrderByDescending(r => r.CompletedAt).ToList();
             if (newestFirst.Count < RecentCount || now - newestFirst[0].CompletedAt!.Value > ActiveWithin) continue;
 
             var recentRows = newestFirst.Take(RecentCount).ToList();
-            var recent = recentRows.Select(r => r.Seconds!.Value).Order().ToList();
+            var recent = recentRows.Select(r => r.AiSeconds!.Value).Order().ToList();
             var recentMedian = AiSpeedStats.Median(recent);
 
-            var baseline = newestFirst.Skip(RecentCount).Select(r => r.Seconds!.Value).Order().ToList();
+            var baseline = newestFirst.Skip(RecentCount).Select(r => r.AiSeconds!.Value).Order().ToList();
             if (slowdownFactor > 0 && baseline.Count >= MinimumBaseline)
             {
                 var normal = AiSpeedStats.Median(baseline);
@@ -187,9 +193,10 @@ public static class AiSlowdownRule
                         $"slow:{model.Key}",
                         $"Camera AI is running {recentMedian / normal:0.#}x slower than normal",
                         $"{model.Key} has taken a median of {Seconds(recentMedian)} over its last {RecentCount} snapshots, " +
-                        $"against {Seconds(normal)} normally this week. Alerts are reaching you that much later. " +
+                        $"against {Seconds(normal)} normally this week - the AI's own time, not counting any wait in the queue. " +
+                        "Alerts are reaching you that much later. " +
                         "Usual causes: the server is short of memory or busy with something else (a build, a transcode), " +
-                        "another model was loaded alongside it, or the alert queue is backing up. " +
+                        "or another model was loaded alongside it. " +
                         "The AI Speed card in Settings shows the latest timings."));
                 }
             }

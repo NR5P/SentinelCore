@@ -119,14 +119,37 @@ public sealed class AiSpeedTests
         }
     }
 
+    // An Ollama analysis that spent all of its seconds in the AI, none in the queue.
+    private static AnalysisTimingRow Ai(string model, double seconds, TimeSpan ago) =>
+        Done(model, seconds, ago, timing: new AnalysisTiming(0.5, seconds * 0.7 - 0.5, seconds * 0.3));
+
     // A week of ~90 s analyses, then whatever the last five were.
     private static List<AnalysisTimingRow> Week(string model, params double[] lastFive)
     {
         var rows = Enumerable.Range(0, 40)
-            .Select(i => Done(model, 85 + i % 10, TimeSpan.FromHours(2 + i * 3)))
+            .Select(i => Ai(model, 85 + i % 10, TimeSpan.FromHours(2 + i * 3)))
             .ToList();
-        rows.AddRange(lastFive.Select((s, i) => Done(model, s, TimeSpan.FromMinutes(5 + i * 10))));
+        rows.AddRange(lastFive.Select((s, i) => Ai(model, s, TimeSpan.FromMinutes(5 + i * 10))));
         return rows;
+    }
+
+    [Fact]
+    public void Rule_IgnoresTimeQueuedBehindOtherAlerts_IncludingAFastDetectorWithNoBreakdown()
+    {
+        // The box, Nov 2026: a 0.2 s detector whose last five waited behind two-minute Ollama
+        // runs read as "178x slower than normal" and "close to timing out". It has no Ollama
+        // breakdown, so the wait is all there is to see - and it is not the detector's.
+        var detector = Enumerable.Range(0, 40)
+            .Select(i => Done("fastlocal/rf-detr-nano", 0.2, TimeSpan.FromHours(2 + i * 3)))
+            .ToList();
+        detector.AddRange(new[] { 120.0, 250, 0.2, 180, 90 }.Select((s, i) => Done("fastlocal/rf-detr-nano", s, TimeSpan.FromMinutes(5 + i * 10))));
+        Assert.Empty(AiSlowdownRule.Evaluate(detector, Now, 2, 80, 300));
+
+        // An Ollama model whose last five each waited ~150 s in the queue but computed at its usual pace.
+        var ollama = Week("gemma4:e4b-it-qat");
+        ollama.AddRange(Enumerable.Range(0, 5).Select(i =>
+            Done("gemma4:e4b-it-qat", 240, TimeSpan.FromMinutes(5 + i * 10), timing: new AnalysisTiming(0.5, 70, 19.5))));
+        Assert.Empty(AiSlowdownRule.Evaluate(ollama, Now, 2, 80, 300));
     }
 
     [Fact]
@@ -152,7 +175,7 @@ public sealed class AiSpeedTests
     public void Rule_NeedsABaseline_AndAModelStillInUse()
     {
         // A model picked this morning: no week to compare against yet.
-        var fresh = Enumerable.Range(0, 10).Select(i => Done("new", 300, TimeSpan.FromMinutes(5 + i))).ToList();
+        var fresh = Enumerable.Range(0, 10).Select(i => Ai("new", 300, TimeSpan.FromMinutes(5 + i))).ToList();
         Assert.Empty(AiSlowdownRule.Evaluate(fresh, Now, 2, 0, 600));
 
         // Switched away from two hours ago: its last five stay slow forever, and say nothing.
