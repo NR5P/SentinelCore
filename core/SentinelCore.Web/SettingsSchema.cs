@@ -452,7 +452,7 @@ public static class SettingsSchema
                     ("ollama", "Ollama (local)"),
                     ("cloud", "Cloud Vision"),
                     ("fastlocal", "Fast Local Detection")),
-                Check("fallbackEnabled", "Fall Back To Another Backend", "If the primary backend fails after its own retries, automatically retry once against another one before giving up - slower, but the alert still gets analyzed instead of being lost."),
+                Check("fallbackEnabled", "Fall Back To Another Backend", "If the primary full AI fails after its own retries, retry once against the other one (Ollama or cloud) - slower, but the alert keeps its full description. On or off, an alert no full AI could answer still gets quick detection's answer (person, vehicle or animal) instead of being lost."),
                 Check("escalationEnabled", "Escalate Fast Detections For Full Analysis", "Only applies when the primary is Fast Local Detection: when the detector finds a person, vehicle, or animal, re-analyze that alert with a full AI to get the detailed description (delivery company, gate state, animal species). Empty alerts - the vast majority - never reach the expensive model at all. If escalation fails, the fast result still stands."),
                 Select("escalationTarget", "Escalation Target", "Which full AI escalated alerts go to. 'Cloud Vision only' never falls back to Ollama - the right choice on hardware where a surprise multi-minute local analysis is worse than a missing description.",
                     ("auto", "Auto (cloud if configured, else Ollama)"),

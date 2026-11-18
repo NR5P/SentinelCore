@@ -77,6 +77,9 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
     private readonly IHostEnvironment _environment;
     private readonly ILogger<FastLocalDetector> _logger;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private readonly object _initGate = new();
+    private readonly CancellationTokenSource _shutdown = new();
+    private Task<InferenceSession>? _initTask;
     private InferenceSession? _session;
     private string _inputName = "input";
     private int _inputSize;
@@ -170,11 +173,28 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
         return await Task.FromResult(!string.IsNullOrWhiteSpace(options.DownloadUrl));
     }
 
-    private async Task<InferenceSession> EnsureInitializedAsync(CancellationToken cancellationToken)
+    // One shared initialization, not one per caller. The download is ~100MB and the first callers
+    // are alerts with their own deadlines: tied to a caller's token, an alert timing out on a slow
+    // connection cancelled the download, and the next alert started it again from zero - so it is
+    // run on the detector's own token and each caller only stops *waiting* when theirs fires. A
+    // failed or cancelled attempt is dropped so the next caller retries it.
+    private Task<InferenceSession> EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_session is not null)
-            return _session;
+            return Task.FromResult(_session);
 
+        Task<InferenceSession> initialization;
+        lock (_initGate)
+        {
+            if (_initTask is null || _initTask.IsFaulted || _initTask.IsCanceled)
+                _initTask = InitializeAsync(_shutdown.Token);
+            initialization = _initTask;
+        }
+        return initialization.WaitAsync(cancellationToken);
+    }
+
+    private async Task<InferenceSession> InitializeAsync(CancellationToken cancellationToken)
+    {
         await _initLock.WaitAsync(cancellationToken);
         try
         {
@@ -329,7 +349,9 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
 
     public void Dispose()
     {
+        // Cancelled, not disposed: a caller still waiting gets a cancelled task, never an
+        // ObjectDisposedException from the token source.
+        _shutdown.Cancel();
         _session?.Dispose();
-        _initLock.Dispose();
     }
 }

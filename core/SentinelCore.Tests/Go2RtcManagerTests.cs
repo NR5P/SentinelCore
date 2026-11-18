@@ -78,6 +78,28 @@ public sealed class Go2RtcManagerTests : IDisposable
         Guid.NewGuid(), "Test Camera", "rtsp://127.0.0.1/stream", null, null, false, false, null, null,
         false, DateTimeOffset.UtcNow);
 
+    // Found on a fresh Linux install: a Reolink-style camera whose _sub path 404s. HLS learned that
+    // and fell back to main, but go2rtc kept being asked for the missing -sub stream, so every
+    // grid tile's MSE waited 16s for nothing and dropped to HLS - on every open.
+    [Fact]
+    public void ALowStreamHlsFoundMissing_IsNotOfferedToGo2RtcUntilTheRetry()
+    {
+        var manager = CreateManager();
+        var camera = TestCamera() with { StreamUrl = "rtsp://192.0.2.10:554/h264Preview_01_main" };
+
+        Assert.Equal(StreamQuality.Sub, manager.EffectiveQuality(camera, StreamQuality.Sub));
+
+        manager.NoteLowResMissing(camera.Id, DateTimeOffset.UtcNow.AddMinutes(10));
+        Assert.Equal(StreamQuality.Main, manager.EffectiveQuality(camera, StreamQuality.Sub));
+
+        // An edit may be the fix, so it gets tried again straight away.
+        manager.ForgetStream(camera.Id);
+        Assert.Equal(StreamQuality.Sub, manager.EffectiveQuality(camera, StreamQuality.Sub));
+
+        manager.NoteLowResMissing(camera.Id, DateTimeOffset.UtcNow.AddSeconds(-1));
+        Assert.Equal(StreamQuality.Sub, manager.EffectiveQuality(camera, StreamQuality.Sub));
+    }
+
     // The regression this file exists for.
     [Fact]
     public async Task AViewerDisconnectingDuringStartup_DoesNotAbandonTheSidecar()

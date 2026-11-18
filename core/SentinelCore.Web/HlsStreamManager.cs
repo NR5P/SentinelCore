@@ -213,6 +213,7 @@ public sealed class HlsStreamManager : IDisposable
             // otherwise reprint this every retry interval for as long as the dashboard is open.
             var alreadyKnown = _lowResRetryAfter.ContainsKey(camera.Id);
             _lowResRetryAfter[camera.Id] = DateTimeOffset.UtcNow + LowResRetryInterval;
+            _go2rtc.NoteLowResMissing(camera.Id, _lowResRetryAfter[camera.Id]);
             if (!alreadyKnown)
                 _logger.LogWarning(
                     "Camera {CameraId} ({Name}) never produced a playlist on its derived low-resolution stream, so " +

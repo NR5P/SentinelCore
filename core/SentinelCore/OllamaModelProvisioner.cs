@@ -31,6 +31,14 @@ public sealed class OllamaModelProvisioner : BackgroundService
     private string? _activeModel;
     private OllamaModelDownload? _download;
 
+    // The warm-up load - see EnsureLoadedAsync. Its own token, not any caller's, so nothing but
+    // shutting down can cancel it.
+    private readonly CancellationTokenSource _stopping = new();
+    private Task? _warmUp;
+    private string? _warmUpModel;
+    private (string Model, DateTimeOffset At)? _confirmedLoaded;
+    private static readonly TimeSpan LoadedRecheck = TimeSpan.FromSeconds(30);
+
     // routing/cloud null means "Ollama is always in use" - the behaviour before routing was
     // consulted, and what the tests that only exercise the pull itself want.
     public OllamaModelProvisioner(
@@ -108,6 +116,121 @@ public sealed class OllamaModelProvisioner : BackgroundService
             lock (_lock)
                 return new OllamaModelStatus(_options.CurrentValue.Model, _activeModel, _download, InUse);
         }
+    }
+
+    // Whether the alert model is loaded into Ollama's memory, starting a load if it isn't and
+    // waiting at most `wait` for it. True when it is ready, when Ollama couldn't be asked (the
+    // alert's own request then fails or succeeds on its merits), or when the load itself failed;
+    // false only while a load is still running.
+    //
+    // Why it exists: Ollama ties a model load to the request that started it, and abandons the
+    // load when that request is cancelled. An alert's request gives up after RequestTimeoutSeconds
+    // (300s), so on a box that needs longer than that to load the model - gemma4 took ~10 minutes
+    // on an 8 GB test VM, 2026-11 - every alert cancelled the load it was waiting on, the next one
+    // started it again from nothing, and the full AI never answered at all. The load here is a
+    // separate request with no deadline, so it finishes however long it takes, and alerts in the
+    // meantime go to quick detection (FailoverVisionClient) instead of each waiting 15 minutes.
+    public async Task<bool> EnsureLoadedAsync(TimeSpan wait, CancellationToken cancellationToken)
+    {
+        var model = ModelForAlerts;
+        lock (_lock)
+        {
+            if (_confirmedLoaded is { } c && IsSameModel(c.Model, model) && DateTimeOffset.UtcNow - c.At < LoadedRecheck)
+                return true;
+        }
+
+        bool loaded;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            loaded = await IsLoadedAsync(model, timeout.Token);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            if (cancellationToken.IsCancellationRequested) throw;
+            return true;
+        }
+
+        if (loaded)
+        {
+            MarkLoaded(model);
+            return true;
+        }
+
+        Task warmUp;
+        lock (_lock)
+        {
+            if (_warmUp is null || _warmUp.IsCompleted || !IsSameModel(_warmUpModel, model))
+            {
+                _warmUpModel = model;
+                _warmUp = WarmUpAsync(model, _stopping.Token);
+            }
+            warmUp = _warmUp;
+        }
+
+        var finished = await Task.WhenAny(warmUp, Task.Delay(wait, cancellationToken)) == warmUp;
+        cancellationToken.ThrowIfCancellationRequested();
+        return finished;
+    }
+
+    private async Task<bool> IsLoadedAsync(string model, CancellationToken ct)
+    {
+        using var response = await _httpClient.GetAsync("api/ps", ct);
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        if (!document.RootElement.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array)
+            return false;
+        foreach (var entry in models.EnumerateArray())
+            foreach (var key in new[] { "name", "model" })
+                if (entry.TryGetProperty(key, out var name) && IsSameModel(name.GetString(), model))
+                    return true;
+        return false;
+    }
+
+    private async Task WarmUpAsync(string model, CancellationToken ct)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        _logger.LogInformation("Loading Ollama model {Model} into memory; alerts use quick detection if it takes a while", model);
+        try
+        {
+            // No prompt: Ollama loads the model and answers once it is in memory.
+            using var response = await _httpClient.PostAsJsonAsync(
+                "api/generate", new { model, keep_alive = _options.CurrentValue.KeepAlive }, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Ollama could not load model {Model}: {Status} {Body}", model, (int)response.StatusCode, body);
+                return;
+            }
+            MarkLoaded(model);
+            _logger.LogInformation("Ollama model {Model} loaded in {Seconds:n0}s", model, (DateTimeOffset.UtcNow - startedAt).TotalSeconds);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Loading Ollama model {Model} failed", model);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void MarkLoaded(string model)
+    {
+        lock (_lock)
+            _confirmedLoaded = (model, DateTimeOffset.UtcNow);
+    }
+
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        _stopping.Cancel();
+        return base.StopAsync(cancellationToken);
+    }
+
+    public override void Dispose()
+    {
+        _stopping.Cancel();
+        base.Dispose();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -204,6 +327,13 @@ public sealed class OllamaModelProvisioner : BackgroundService
         if (!response.IsSuccessStatusCode)
             return $"Ollama answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(ct)}";
 
+        // Known up front only from the registry: the pull itself reports one layer at a time, and
+        // gemma4:e2b-it-qat is two big layers (a ~1 GB vision projector, then ~3.3 GB of weights),
+        // so a per-layer percentage ran to 98% and then started again from 0 - which reads as a
+        // failed download. Without the manifest it falls back to the per-layer figure.
+        var modelBytes = await ManifestTotalBytesAsync(model, ct);
+        var layers = new Dictionary<string, long>();
+
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
         string? lastStatus = null;
         while (await reader.ReadLineAsync(ct) is { } line)
@@ -212,17 +342,77 @@ public sealed class OllamaModelProvisioner : BackgroundService
             if (update is null) continue;
             if (update.Error is not null) return update.Error;
             lastStatus = update.Status;
-            if (update.Percent is { } percent)
-                lock (_lock)
-                    _download = new OllamaModelDownload(model, percent, null);
+            if (update.Percent is not { } percent) continue;
+            if (modelBytes is > 0 && update.Digest is { } digest && update.Completed is { } done)
+            {
+                layers[digest] = done;
+                percent = (int)Math.Clamp(layers.Values.Sum() * 100 / modelBytes.Value, 0, 100);
+            }
+            lock (_lock)
+                _download = new OllamaModelDownload(model, percent, null);
         }
 
         return lastStatus == "success" ? null : "the download stopped before Ollama reported success";
     }
 
+    // The whole model's size, from the same public registry Ollama pulls from. Null for anything
+    // that isn't a plain registry.ollama.ai name (a host-qualified model, a typo) or when the
+    // registry doesn't answer quickly - progress then falls back to per layer.
+    private async Task<long?> ManifestTotalBytesAsync(string model, CancellationToken ct)
+    {
+        var url = ManifestUrl(model);
+        if (url is null) return null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Accept.ParseAdd("application/vnd.docker.distribution.manifest.v2+json");
+            using var response = await _httpClient.SendAsync(request, timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return ManifestTotalBytes(await response.Content.ReadAsStringAsync(timeout.Token));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    // "gemma4:e2b-it-qat" -> library/gemma4, tag e2b-it-qat; "someone/model" -> someone/model:latest.
+    public static Uri? ManifestUrl(string model)
+    {
+        var name = model.Trim();
+        var tag = "latest";
+        var colon = name.LastIndexOf(':');
+        if (colon > name.LastIndexOf('/'))
+        {
+            tag = name[(colon + 1)..];
+            name = name[..colon];
+        }
+        var parts = name.Split('/');
+        if (parts.Length > 2 || parts.Any(p => p.Length == 0) || (parts.Length == 2 && parts[0].Contains('.')))
+            return null;
+        var repository = parts.Length == 1 ? $"library/{parts[0]}" : name;
+        return new Uri($"https://registry.ollama.ai/v2/{repository}/manifests/{tag}");
+    }
+
+    public static long? ManifestTotalBytes(string manifestJson)
+    {
+        using var document = JsonDocument.Parse(manifestJson);
+        if (!document.RootElement.TryGetProperty("layers", out var layers) || layers.ValueKind != JsonValueKind.Array)
+            return null;
+        long total = 0;
+        foreach (var layer in layers.EnumerateArray())
+            if (layer.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes))
+                total += bytes;
+        if (document.RootElement.TryGetProperty("config", out var config) &&
+            config.TryGetProperty("size", out var configSize) && configSize.TryGetInt64(out var configBytes))
+            total += configBytes;
+        return total > 0 ? total : null;
+    }
+
     // Public so the progress arithmetic can be tested against real pull lines without Ollama.
-    // A pull reports each layer separately, so the percentage restarts per layer; the big weights
-    // layer dominates both the time and the bytes, which is what makes this a fair progress bar.
+    // Percent here is the one layer's; PullAsync turns it into the whole model's when it can.
     public static PullUpdate? ParsePullLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line)) return null;
@@ -235,10 +425,15 @@ public sealed class OllamaModelProvisioner : BackgroundService
 
             var status = root.TryGetProperty("status", out var s) ? s.GetString() : null;
             int? percent = null;
+            long? completedBytes = null;
             if (root.TryGetProperty("total", out var total) && total.TryGetInt64(out var totalBytes) && totalBytes > 0 &&
-                root.TryGetProperty("completed", out var completed) && completed.TryGetInt64(out var completedBytes))
-                percent = (int)Math.Clamp(completedBytes * 100 / totalBytes, 0, 100);
-            return new PullUpdate(status, percent, null);
+                root.TryGetProperty("completed", out var completed) && completed.TryGetInt64(out var done))
+            {
+                completedBytes = done;
+                percent = (int)Math.Clamp(done * 100 / totalBytes, 0, 100);
+            }
+            var digest = root.TryGetProperty("digest", out var d) ? d.GetString() : null;
+            return new PullUpdate(status, percent, null, digest, completedBytes);
         }
         catch (JsonException)
         {
@@ -255,7 +450,7 @@ public sealed class OllamaModelProvisioner : BackgroundService
                && installed.Equals($"{configured}:latest", StringComparison.OrdinalIgnoreCase);
     }
 
-    public sealed record PullUpdate(string? Status, int? Percent, string? Error);
+    public sealed record PullUpdate(string? Status, int? Percent, string? Error, string? Digest = null, long? Completed = null);
 
     private sealed record TagsResponse(IReadOnlyList<Tag>? Models);
 

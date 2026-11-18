@@ -60,6 +60,124 @@ public sealed class OllamaModelProvisionerTests
         await provisioner.StopAsync(ct);
     }
 
+    // Ollama abandons a model load when the request that started it is cancelled, and an alert's
+    // request gives up after 300s - so on a box that took ~10 minutes to load gemma4 (8 GB test VM,
+    // 2026-11) every alert cancelled the load it was waiting on and the full AI never answered.
+    [Fact]
+    public async Task ASlowModelLoad_RunsOnItsOwnRequest_AndOutlivesTheAlertsWaitingOnIt()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ollama = new LoadingOllama();
+        using var http = new HttpClient(ollama) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var provisioner = new OllamaModelProvisioner(
+            http, new ChangingOptions(new OllamaOptions { Model = "gemma4:e2b-it-qat" }), NullLogger<OllamaModelProvisioner>.Instance);
+
+        // Two alerts that won't wait long, one of which gives up altogether.
+        using var impatient = new CancellationTokenSource();
+        var first = provisioner.EnsureLoadedAsync(TimeSpan.FromSeconds(30), impatient.Token);
+        var second = provisioner.EnsureLoadedAsync(TimeSpan.FromMilliseconds(200), ct);
+        Assert.False(await second);
+        impatient.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        Assert.Equal(1, ollama.LoadRequests);
+        Assert.False(ollama.LoadCancelled, "an alert giving up cancelled the model load");
+
+        ollama.FinishLoading();
+        Assert.True(await provisioner.EnsureLoadedAsync(TimeSpan.FromSeconds(5), ct));
+        Assert.Equal(1, ollama.LoadRequests);
+    }
+
+    [Fact]
+    public async Task AModelAlreadyInMemory_IsReadyWithoutLoading()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ollama = new LoadingOllama { Loaded = "gemma4:e2b-it-qat" };
+        using var http = new HttpClient(ollama) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var provisioner = new OllamaModelProvisioner(
+            http, new ChangingOptions(new OllamaOptions { Model = "gemma4:e2b-it-qat" }), NullLogger<OllamaModelProvisioner>.Instance);
+
+        Assert.True(await provisioner.EnsureLoadedAsync(TimeSpan.FromMilliseconds(100), ct));
+        Assert.Equal(0, ollama.LoadRequests);
+    }
+
+    // /api/ps lists what is in memory; /api/generate with no prompt loads a model and answers when
+    // it is in, here only once FinishLoading is called.
+    private sealed class LoadingOllama : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _loadRequests;
+        public string? Loaded { get; set; }
+        public int LoadRequests => _loadRequests;
+        public bool LoadCancelled { get; private set; }
+
+        public void FinishLoading() => _loaded.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/api/ps"))
+            {
+                var models = Loaded is null ? Array.Empty<object>() : new object[] { new { name = Loaded, model = Loaded } };
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { models })) };
+            }
+            if (path.EndsWith("/api/generate"))
+            {
+                Interlocked.Increment(ref _loadRequests);
+                try
+                {
+                    await _loaded.Task.WaitAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    LoadCancelled = true;
+                    throw;
+                }
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                Loaded = body.RootElement.GetProperty("model").GetString();
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"done":true,"done_reason":"load"}""") };
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+    }
+
+    // gemma4:e2b-it-qat pulls as two big layers. Per layer, the wizard's bar ran to 98% and dropped
+    // back to 0 for the second one - it read as a failed download on the first fresh install.
+    [Fact]
+    public async Task Progress_CoversTheWholeModel_NotJustTheCurrentLayer()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ollama = new FakeOllama
+        {
+            Manifest = """{"config":{"size":0},"layers":[{"size":250},{"size":750}]}""",
+            Progress = """{"status":"pulling aaa","digest":"sha256:a","total":250,"completed":250}""" + "\n" +
+                       """{"status":"pulling bbb","digest":"sha256:b","total":750,"completed":375}""" + "\n",
+        };
+        using var http = new HttpClient(ollama) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var provisioner = new OllamaModelProvisioner(
+            http, new ChangingOptions(new OllamaOptions { Model = "gemma4:e2b-it-qat" }), NullLogger<OllamaModelProvisioner>.Instance);
+
+        await provisioner.StartAsync(ct);
+        // 625 of 1000 bytes - not the second layer's own 50%.
+        await WaitFor(() => provisioner.Status.Download?.Percent == 62, ct);
+        ollama.FinishPull();
+        await provisioner.StopAsync(ct);
+    }
+
+    [Theory]
+    [InlineData("gemma4:e2b-it-qat", "https://registry.ollama.ai/v2/library/gemma4/manifests/e2b-it-qat")]
+    [InlineData("llava", "https://registry.ollama.ai/v2/library/llava/manifests/latest")]
+    [InlineData("someone/model:7b", "https://registry.ollama.ai/v2/someone/model/manifests/7b")]
+    [InlineData("hf.co/org/model:q4", null)]
+    [InlineData("example.com/model", null)]
+    public void ManifestUrl_OnlyForRegistryNames(string model, string? expected) =>
+        Assert.Equal(expected, OllamaModelProvisioner.ManifestUrl(model)?.ToString());
+
+    [Fact]
+    public void ManifestTotal_SumsLayersAndConfig() =>
+        Assert.Equal(1545L, OllamaModelProvisioner.ManifestTotalBytes(
+            """{"config":{"size":545},"layers":[{"size":1000},{"size":0}]}"""));
+
     [Theory]
     [InlineData("""{"status":"pulling 3646b4c147cd","digest":"sha256:x","total":4000,"completed":1000}""", "pulling 3646b4c147cd", 25, null)]
     [InlineData("""{"status":"verifying sha256 digest"}""", "verifying sha256 digest", null, null)]
@@ -249,6 +367,8 @@ public sealed class OllamaModelProvisionerTests
         private readonly TaskCompletionSource _finish = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string? PullError { get; init; }
+        public string? Manifest { get; init; }
+        public string Progress { get; init; } = """{"status":"pulling abc","total":200,"completed":100}""" + "\n";
         public string? PulledModel { get; private set; }
         public string? LastChatBody { get; private set; }
 
@@ -257,6 +377,8 @@ public sealed class OllamaModelProvisionerTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.RequestUri.Host == "registry.ollama.ai")
+                return Manifest is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Json(Manifest);
             if (path.EndsWith("/api/tags"))
             {
                 lock (_installed)
@@ -290,7 +412,7 @@ public sealed class OllamaModelProvisionerTests
         // Writes "50% done", then blocks until FinishPull, then reports success and installs the model.
         private sealed class PullStream(FakeOllama owner, string model) : Stream
         {
-            private byte[] _pending = Encoding.UTF8.GetBytes("""{"status":"pulling abc","total":200,"completed":100}""" + "\n");
+            private byte[] _pending = Encoding.UTF8.GetBytes(owner.Progress);
             private int _stage;
 
             public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)

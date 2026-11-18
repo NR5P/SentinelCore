@@ -1,5 +1,7 @@
 package com.sentinelcore.android.ui.components
 
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -69,7 +71,12 @@ fun BrandedCard(
             .border(1.dp, SentinelGreenDim.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
             .padding(14.dp),
     ) {
-        content()
+        // A Box sets no content colour, so plain Text inside fell back to black - invisible on the
+        // dark card wherever no Scaffold/Surface above provides one (the first-run setup screen's
+        // welcome text, on a phone in dark mode).
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+            content()
+        }
     }
 }
 

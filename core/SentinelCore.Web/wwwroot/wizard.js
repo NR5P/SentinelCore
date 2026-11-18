@@ -566,9 +566,41 @@ window.GateWatchWizard = (function () {
       for (const id of ["wizard-camera-name", "wizard-camera-url", "wizard-camera-user", "wizard-camera-pass"]) {
         document.getElementById(id).value = "";
       }
-      setCameraResult(`added "${name}" - add another, or press next`, "ok");
+      const alerting = payload.id ? await watchWholePicture(payload.id) : false;
+      setCameraResult(alerting
+        ? `added "${name}" - it alerts on motion anywhere in the picture (narrow that in CAMERAS > TRIGGER ZONE). Add another, or press next`
+        : `added "${name}" - add another, or press next. To get alerts from it, draw a zone in CAMERAS > TRIGGER ZONE`, "ok");
     } catch {
       setCameraResult("network error", "bad");
+    }
+  }
+
+  // A camera on its own only streams: nothing alerts until it has a trigger zone that is switched on
+  // and sends to the AI - three settings a new owner had no way of knowing about, so a first run
+  // that "got alerts working" never produced a single alert. The whole picture is a safe start: the
+  // AI confirms every trigger before anything is notified, and the zone editor narrows it later.
+  async function watchWholePicture(cameraId) {
+    try {
+      const current = await fetch(`/api/cameras/${cameraId}/trigger-config`);
+      if (!current.ok) return false;
+      const config = await current.json();
+      const whole = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+      const minTriggerArea = config.minTriggerArea || 0.02;
+      const response = await fetch(`/api/cameras/${cameraId}/trigger-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...config,
+          enabled: true,
+          sendToAlerts: true,
+          zonePolygon: whole,
+          minTriggerArea,
+          zones: [{ name: "Zone 1", polygon: whole, minTriggerArea }]
+        })
+      });
+      return response.ok;
+    } catch {
+      return false;
     }
   }
 

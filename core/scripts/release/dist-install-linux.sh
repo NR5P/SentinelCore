@@ -169,12 +169,44 @@ else
   # never hit it, so it grows ~400 MB per alert until a 16 GB box runs out of memory every few
   # hours (the media box, 2026-10). Ollama passes its environment to llama-server; this turns
   # the cache off. Same file as core/systemd/ollama-cache-ram.conf - see docs/DEPLOYMENT.md.
+  #
+  # Ollama is restarted only when one of these files actually changed. Restarting it on every run
+  # killed a model download in progress, and an Ollama killed mid-download can leave an empty
+  # chunk record behind that fails every later pull with a bare "EOF" - the full AI then never
+  # arrives (found on a test install, 2026-11). The second drop-in clears exactly that wreckage
+  # each time Ollama starts, so a reboot or power cut mid-download heals itself too.
   if systemctl cat ollama.service >/dev/null 2>&1; then
-    echo "==> Turning off Ollama's RAM prompt cache"
-    mkdir -p /etc/systemd/system/ollama.service.d
-    printf '[Service]\nEnvironment="LLAMA_ARG_CACHE_RAM=0"\n' | tee /etc/systemd/system/ollama.service.d/cache-ram.conf >/dev/null
-    systemctl daemon-reload
-    systemctl restart ollama
+    dropins=/etc/systemd/system/ollama.service.d
+    mkdir -p "$dropins"
+    ollama_changed=0
+    write_dropin() {
+      local file=$1 content=$2
+      if [[ "$(cat "$file" 2>/dev/null)" != "$content" ]]; then
+        printf '%s\n' "$content" > "$file"
+        ollama_changed=1
+      fi
+    }
+    install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/sentinelcore-ollama-heal-partials <<'HEAL'
+#!/bin/sh
+# Run by Ollama's unit before it starts (nothing is downloading then). A chunk record Ollama was
+# killed while writing is left empty and makes every pull of that file fail with "EOF"; drop that
+# file's whole partial download so the next pull starts it cleanly.
+blobs="${OLLAMA_MODELS:-$HOME/.ollama/models}/blobs"
+[ -d "$blobs" ] || exit 0
+find "$blobs" -maxdepth 1 -name 'sha256-*-partial-*' -size 0 | while read -r record; do
+  base="${record%-partial-*}"
+  echo "removing an interrupted download that can't resume: $base"
+  rm -f "$base"-partial "$base"-partial-*
+done
+exit 0
+HEAL
+    write_dropin "$dropins/cache-ram.conf" $'[Service]\nEnvironment="LLAMA_ARG_CACHE_RAM=0"'
+    write_dropin "$dropins/sentinelcore-heal-partials.conf" $'[Service]\nExecStartPre=-/usr/local/libexec/sentinelcore-ollama-heal-partials'
+    if [[ "$ollama_changed" == "1" ]]; then
+      echo "==> Configuring Ollama (RAM prompt cache off, interrupted-download repair)"
+      systemctl daemon-reload
+      systemctl restart ollama
+    fi
   fi
   # No model is pulled here. A new install starts on the fast local detector, and the 4.3 GB
   # vision model is downloaded by the app itself the moment someone picks Ollama in the setup
@@ -423,10 +455,15 @@ if [[ "$HEALTHY" != "1" ]]; then
   exit 1
 fi
 
+# The address to type, not a placeholder to work out: on a headless box "find this machine's LAN
+# IP" was a step a new owner had no obvious way to do. First global IPv4 the kernel reports.
+LAN_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
+LAN_IP=${LAN_IP:-<this-machine\'s-LAN-IP>}
+
 if [[ "$IS_UPGRADE" == "1" ]]; then
   cat <<NEXT
 
-==> Upgrade complete. The dashboard is at http://<this-machine's-LAN-IP>:$WEB_PORT
+==> Upgrade complete. The dashboard is at http://$LAN_IP:$WEB_PORT
     Your settings, cameras, events, captured images and HTTPS certificate all carried over -
     no need to run the setup wizard again, and devices that already trust this server's
     certificate stay trusted.
@@ -440,7 +477,7 @@ NEXT
 else
   cat <<NEXT
 
-==> Done. Open the dashboard at http://<this-machine's-LAN-IP>:$WEB_PORT
+==> Done. Open the dashboard at http://$LAN_IP:$WEB_PORT
     The setup wizard walks through the rest (API key, vision backend, cameras, notifications).
     HTTPS is already on too, at the same address on port 3443 - the app generated its own
     certificate on first startup. See docs/DEPLOYMENT.md section 14a to trust it on your other

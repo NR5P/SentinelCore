@@ -3,8 +3,9 @@ using Microsoft.Extensions.Options;
 namespace SentinelCore;
 
 // Routes each alert to whichever backend VisionRoutingOptions:Primary names, and - if
-// FallbackEnabled - retries against another backend when the primary's own retries are
-// exhausted. This is what AlertProcessor and everything else actually depends on; nothing else
+// FallbackEnabled - retries against the other full AI when the primary's own retries are
+// exhausted. Without one, the fast detector is the fallback for anything it can answer (see
+// ResolveOrder), and it also takes alerts while Ollama's model is still loading (OllamaLoadWait). This is what AlertProcessor and everything else actually depends on; nothing else
 // talks to Ollama, a cloud provider, or the fast local detector directly.
 //
 // Two extra rules exist for the "fastlocal" primary:
@@ -39,8 +40,15 @@ public sealed class FailoverVisionClient(
     IOptionsMonitor<VisionRoutingOptions> routingOptions,
     IOptionsMonitor<CloudVisionOptions> cloudOptions,
     ILogger<FailoverVisionClient> logger,
-    Func<bool>? ollamaModelMissing = null) : IVisionAnalysisClient
+    Func<bool>? ollamaModelMissing = null,
+    Func<TimeSpan, CancellationToken, Task<bool>>? ollamaLoadedWithin = null) : IVisionAnalysisClient
 {
+    // How long an alert waits for Ollama to finish loading its model before it is answered by the
+    // fast detector instead. A normal load is a few seconds, so this only ever changes anything on
+    // a box slow enough that the load would otherwise outlast the alert - see
+    // OllamaModelProvisioner.EnsureLoadedAsync.
+    public static readonly TimeSpan OllamaLoadWait = TimeSpan.FromSeconds(45);
+
     public async Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
         IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken)
     {
@@ -49,13 +57,25 @@ public sealed class FailoverVisionClient(
         // Two independent reasons to skip the detector, deliberately not folded into one flag:
         // isGateCheck ALSO exempts the result from MinimumConfidence (see ApplyConfidenceFloor), and
         // a camera that just wants the full model has no business skipping the confidence floor too.
-        var (primary, fallback, primaryName, fallbackName) =
-            ResolveOrder(includeFastLocal: !isGateCheck && !alert.BypassFastLocal);
+        var includeFastLocal = !isGateCheck && !alert.BypassFastLocal;
+        var (primary, fallback, primaryName, fallbackName) = ResolveOrder(includeFastLocal);
 
         // One snapshot for every decision below. IOptionsMonitor rebinds the moment a settings save
         // lands, so reading CurrentValue separately per branch could apply half of one configuration
         // and half of the next to the same alert.
         var routing = routingOptions.CurrentValue;
+
+        // Ollama's model not in memory yet: start loading it on a request no alert can cancel, and
+        // give it OllamaLoadWait. Gate checks (and cameras that bypass the detector) wait for it
+        // regardless, since only a full AI can answer them; everything else gets the detector's
+        // answer now rather than a 15-minute wait that, on a slow box, ended in no answer at all.
+        if (primary == ollama && ollamaLoadedWithin is not null
+            && !await ollamaLoadedWithin(OllamaLoadWait, cancellationToken) && includeFastLocal)
+        {
+            logger.LogInformation(
+                "Ollama is still loading its model; alert {AlertId} uses quick detection instead of waiting", alert.Id);
+            return await fastLocal.AnalyzeAsync(alert, profile, cancellationToken);
+        }
 
         (VisionAnalysis Analysis, string Raw, string Model) result;
         try
@@ -71,7 +91,10 @@ public sealed class FailoverVisionClient(
                 alert.Id,
                 fallbackName);
             var fallbackResult = await fallback.AnalyzeAsync(alert, profile, cancellationToken);
-            return ApplyConfidenceFloor(fallbackResult, alert, routing, isGateCheck, fallbackName!);
+            // The detector's score is not a VLM's confidence; the floor is for VLM answers only.
+            return fallback == fastLocal
+                ? fallbackResult
+                : ApplyConfidenceFloor(fallbackResult, alert, routing, isGateCheck, fallbackName!);
         }
 
         // Anything that isn't the detector is a VLM, so its answer faces the confidence floor and
@@ -128,7 +151,10 @@ public sealed class FailoverVisionClient(
     {
         var (primary, fallback, _, _) = ResolveOrder(includeFastLocal: true);
         if (await primary.IsReadyAsync(cancellationToken)) return true;
-        return fallback is not null && await fallback.IsReadyAsync(cancellationToken);
+        // The fast detector as a safety net under a full AI doesn't count: self-monitoring uses this
+        // to say "the AI is down", and alerts merely surviving on "person"/"vehicle" is exactly the
+        // degraded state the owner should hear about.
+        return fallback is not null && fallback != fastLocal && await fallback.IsReadyAsync(cancellationToken);
     }
 
     private static bool HasDetectedSubject(VisionAnalysis analysis) =>
@@ -323,14 +349,22 @@ public sealed class FailoverVisionClient(
             return (ollama, null, "Ollama", null);
         }
 
+        // With no second full AI to fall back to, the fast detector is the safety net whenever it
+        // can take the alert, whatever FallbackEnabled says. A failed analysis is saved as failed and
+        // notifies no one, so an Ollama that was down, out of memory or still loading used to mean a
+        // person at the door produced nothing at all; "person" without a description is far better.
+        // FallbackEnabled keeps its meaning - fall back to the *other full AI* - and wins when set.
+        IVisionAnalysisClient? safetyNet = includeFastLocal ? fastLocal : null;
+        string? safetyNetName = includeFastLocal ? "FastLocal" : null;
+
         if (primaryIsCloud)
             return routing.FallbackEnabled
                 ? (cloud, ollama, cloudName, "Ollama")
-                : (cloud, null, cloudName, null);
+                : (cloud, safetyNet, cloudName, safetyNetName);
 
         return routing.FallbackEnabled && cloudConfigured
             ? (ollama, cloud, "Ollama", cloudName)
-            : (ollama, null, "Ollama", null);
+            : (ollama, safetyNet, "Ollama", safetyNetName);
     }
 
     private static string CloudProviderName(string provider) => provider switch

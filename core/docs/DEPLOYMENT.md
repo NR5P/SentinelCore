@@ -323,6 +323,11 @@ into the `HttpClient` once at startup and can only be changed by hand here:
   in flight, and the default `gemma4:e2b-it-qat` about 70 s, so a slower machine or a larger model can reach 300 s. If analyses fail on
   timeout rather than on a model error, raise this before changing anything else.
   **Restart the service after editing.**
+  Loading the model into memory is not part of this budget: when the model isn't loaded, the
+  server loads it on a request of its own with no deadline (an 8 GB VM took ~10 minutes for
+  `gemma4:e2b-it-qat`) and gives it 45 s; alerts after that use quick detection until the load
+  finishes. Whatever the cause, an alert the full AI can't answer still gets quick detection's
+  answer rather than being lost (gate checks excepted - only a full AI can answer those).
 
 The rest of the block — `Model`, `KeepAlive`, `Temperature`, `MaximumOutputTokens`, `TopK`,
 `TopP`, `MaximumRetries`, `RetryDelaySeconds` — is described in

@@ -330,6 +330,8 @@ public sealed class Go2RtcManager : IDisposable
         // is keyed by camera rather than by rendition, so it is dropped here whether or not this
         // camera had a registration to forget - a pulled camera simply has no transcode to stop.
         _ = _mseTranscoder.StopAsync(cameraId);
+        // An edit may be the fix for the missing low stream - let it prove itself again now.
+        _lowResMissingUntil.TryRemove(cameraId, out _);
 
         List<StreamQuality> dropped;
         lock (_registeredSources)
@@ -383,17 +385,31 @@ public sealed class Go2RtcManager : IDisposable
     // rather than a second stream pointing at the same address. Two go2rtc streams on one URL
     // means two connections to the camera, and on these Reolinks the concurrent-connection budget
     // is already tight enough that the detection pipeline competes with the live view.
-    private static StreamQuality EffectiveQuality(Camera camera, StreamQuality requested)
+    //
+    // A derivable low URL is only a guess about the camera, though. When HlsStreamManager finds the
+    // camera never serves it, it says so here (NoteLowResMissing). Without that, every grid tile
+    // kept asking go2rtc for the missing stream: MSE waited out its whole budget (16s) for media
+    // that could never come and dropped to HLS - on every open, for as long as the camera existed.
+    public StreamQuality EffectiveQuality(Camera camera, StreamQuality requested)
     {
         if (requested == StreamQuality.Main) return StreamQuality.Main;
         if (camera.IsBrowserPublished) return StreamQuality.Main;
         // Always honourable: it is made from Main inside go2rtc, which costs no extra connection
         // to the camera - the transcode reads the Main stream go2rtc already holds.
         if (requested == StreamQuality.Hd) return StreamQuality.Hd;
+        if (_lowResMissingUntil.TryGetValue(camera.Id, out var until) && DateTimeOffset.UtcNow < until)
+            return StreamQuality.Main;
         return CameraSource.TryDeriveLowResUrl(HlsStreamManager.BuildAuthenticatedUrl(camera)) is null
             ? StreamQuality.Main
             : StreamQuality.Sub;
     }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> _lowResMissingUntil = new();
+
+    // Same retry window HlsStreamManager uses, so both live paths go back to trying the low
+    // rendition together.
+    public void NoteLowResMissing(Guid cameraId, DateTimeOffset retryAfter) =>
+        _lowResMissingUntil[cameraId] = retryAfter;
 
     private Task RegisterStreamAsync(Camera camera, CancellationToken cancellationToken) =>
         RegisterStreamAsync(camera, StreamQuality.Main, cancellationToken);

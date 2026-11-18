@@ -2860,9 +2860,26 @@ class SentinelRepository(
         fun normalizeAddress(value: String, defaultScheme: String? = null): String {
             val trimmed = value.trim()
             if (trimmed.isBlank()) return ""
-            val scheme = defaultScheme ?: if (isHomeNetworkAddress(trimmed)) "http" else "https"
-            val withScheme = if ("://" in trimmed) trimmed else "$scheme://$trimmed"
+            val home = defaultScheme == null && isHomeNetworkAddress(trimmed)
+            val scheme = defaultScheme ?: if (home) "http" else "https"
+            val withScheme = when {
+                "://" in trimmed -> trimmed
+                // Typed with no port, a home address gets the dashboard's :3320 too - a bare
+                // "192.168.1.50" is what a new owner types, and it landed on port 80 and Offline.
+                home -> withDashboardPort("$scheme://$trimmed")
+                else -> "$scheme://$trimmed"
+            }
             return withScheme.trimEnd('/')
+        }
+
+        const val DASHBOARD_PORT = 3320
+
+        private fun withDashboardPort(address: String): String {
+            val uri = runCatching { java.net.URI(address) }.getOrNull() ?: return address
+            if (uri.host.isNullOrEmpty() || uri.port != -1) return address
+            return runCatching {
+                java.net.URI(uri.scheme, uri.userInfo, uri.host, DASHBOARD_PORT, uri.rawPath, uri.rawQuery, uri.rawFragment).toString()
+            }.getOrDefault(address)
         }
 
         fun isHomeNetworkAddress(typed: String): Boolean {

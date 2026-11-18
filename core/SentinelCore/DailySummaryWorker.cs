@@ -37,6 +37,8 @@ public sealed class DailySummaryWorker : BackgroundService
         _logger = logger;
     }
 
+    private bool _warnedEmailIncomplete;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -53,10 +55,15 @@ public sealed class DailySummaryWorker : BackgroundService
                 string.IsNullOrWhiteSpace(emailOptions.AppPassword) ||
                 string.IsNullOrWhiteSpace(emailOptions.ToAddress))
             {
-                _logger.LogWarning("DailySummary is enabled but Email settings are incomplete; scheduled digests will not be sent.");
+                // Once per stretch, not once a minute: on a fresh install (summary on, no email
+                // yet) this was a warning every 60s in the journal, forever.
+                if (!_warnedEmailIncomplete)
+                    _logger.LogWarning("DailySummary is enabled but Email settings are incomplete; scheduled digests will not be sent.");
+                _warnedEmailIncomplete = true;
                 if (!await WaitAsync(TimeSpan.FromSeconds(60), stoppingToken)) break;
                 continue;
             }
+            _warnedEmailIncomplete = false;
 
             var (fireAt, kind) = GetNextRun(DateTimeOffset.Now, options.MorningHour, options.EveningHour);
             var delay = fireAt - DateTimeOffset.Now;

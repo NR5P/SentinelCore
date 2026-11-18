@@ -40,11 +40,24 @@ public static class ServerAddress
     public static string AddSchemeIfMissing(string raw, string? defaultScheme = null)
     {
         var trimmed = (raw ?? "").Trim();
-        var scheme = defaultScheme ?? (IsHomeNetworkAddress(trimmed) ? "http" : "https");
-        var withScheme = trimmed.Contains("://", StringComparison.Ordinal)
-            ? trimmed
-            : $"{scheme}://{trimmed}";
-        return withScheme.TrimEnd('/');
+        var home = defaultScheme is null && IsHomeNetworkAddress(trimmed);
+        var scheme = defaultScheme ?? (home ? "http" : "https");
+        if (trimmed.Contains("://", StringComparison.Ordinal)) return trimmed.TrimEnd('/');
+        var withScheme = $"{scheme}://{trimmed}".TrimEnd('/');
+        // Typed with no port, a home address gets the dashboard's :3320 too - a bare
+        // "192.168.1.50" is what a new owner types, and it landed on port 80 and Offline.
+        if (home && !HasExplicitPort(trimmed) && Uri.TryCreate(withScheme, UriKind.Absolute, out var uri) && uri.Host.Length > 0)
+            withScheme = new UriBuilder(uri) { Port = DefaultHttpPort }.Uri.ToString().TrimEnd('/');
+        return withScheme;
+    }
+
+    // Uri reports 80 both for "host" and "host:80", so look at what was typed: a ':' after the
+    // host part (past any IPv6 brackets) means a port was given.
+    private static bool HasExplicitPort(string typed)
+    {
+        var authority = typed.Split('/', 2)[0];
+        var afterBrackets = authority.LastIndexOf(']');
+        return authority.IndexOf(':', afterBrackets + 1) >= 0;
     }
 
     public static bool IsHomeNetworkAddress(string typed)

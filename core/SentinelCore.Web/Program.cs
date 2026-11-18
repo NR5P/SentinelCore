@@ -158,7 +158,7 @@ builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>()
 // Feed's visual search box needs its own instance to encode search-query text. Model download/
 // load is deferred to first actual search (see ImageEmbeddingService.EnsureInitializedAsync), so
 // this line alone costs nothing until semantic search is both enabled and used.
-builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
+builder.Services.AddSingletonWithHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
 builder.Services.AddSingleton<ApnsSender>();
 builder.Services.AddSingleton<FcmSender>();
 builder.Services.AddHttpClient(nameof(PushRelayClient), client => client.Timeout = TimeSpan.FromSeconds(15));
@@ -449,7 +449,7 @@ builder.Services.AddSingleton<CameraDiscoveryService>();
 builder.Services.AddSingleton<PtzActivityTracker>();
 // Only ever constructed lazily by PtzTracker, and only when tracking is switched on - so a default
 // install never loads a second copy of the ~100MB detection model into this process.
-builder.Services.AddHttpClient<IFastLocalDetector, FastLocalDetector>();
+builder.Services.AddSingletonWithHttpClient<IFastLocalDetector, FastLocalDetector>();
 builder.Services.Configure<FastLocalOptions>(builder.Configuration.GetSection(FastLocalOptions.SectionName));
 builder.Services.Configure<PtzTrackingOptions>(builder.Configuration.GetSection(PtzTrackingOptions.SectionName));
 builder.Services.AddSingleton<PtzTracker>();

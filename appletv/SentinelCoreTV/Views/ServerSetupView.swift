@@ -103,11 +103,26 @@ struct ServerSetupView: View {
     // how the dashboard ships. Anything else is an internet address and gets https://: typing
     // "home.example.com" must never send a password across the internet in plain text. Same rule
     // as the iPhone's ServerSetupView and Android's SentinelRepository.normalizeAddress.
+    // A home-network address typed with no port also gets the dashboard's :3320 - see the
+    // iPhone's ServerSetupView.normalizedAddress.
     static func normalizedAddress(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scheme = isHomeNetworkAddress(trimmed) ? "http" : "https"
-        let withScheme = trimmed.contains("://") ? trimmed : "\(scheme)://\(trimmed)"
+        let withScheme: String
+        if trimmed.contains("://") {
+            withScheme = trimmed
+        } else if isHomeNetworkAddress(trimmed) {
+            withScheme = withDashboardPort("http://\(trimmed)")
+        } else {
+            withScheme = "https://\(trimmed)"
+        }
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    }
+
+    private static func withDashboardPort(_ address: String) -> String {
+        guard var components = URLComponents(string: address), components.host?.isEmpty == false,
+              components.port == nil else { return address }
+        components.port = 3320
+        return components.string ?? address
     }
 
     static func isHomeNetworkAddress(_ typed: String) -> Bool {

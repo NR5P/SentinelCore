@@ -67,10 +67,10 @@ them by description, search visually ("red truck"), or just ask: *"what happened
 
 ![Events feed with AI descriptions](docs/screenshots/events.jpg)
 
-- **Three vision backends**: a local Ollama model (the default; nothing leaves the house), a
+- **Three vision backends**: a local Ollama model (recommended; nothing leaves the house), a
   hosted cloud model, or a fast on-device RF-DETR detector that answers in milliseconds and
-  escalates to a full model only when it sees a person, vehicle or animal. Fallback between them
-  is automatic.
+  escalates to a full model only when it sees a person, vehicle or animal. If the full model is
+  down or still loading, the detector answers, so no alert is lost.
 - **Prompt profiles**: over 100 built-in instructions for different camera spots, from a front
   porch to a chicken coop, a pole barn or a boat dock.
 - **Known faces and known vehicles**: local face recognition and license-plate reading, so the
@@ -260,7 +260,8 @@ cd /opt/sentinelcore
 sudo ./install.sh
 ```
 
-It installs what it needs (ffmpeg, go2rtc, Ollama and its vision model), sets up systemd services
+It installs what it needs (ffmpeg, go2rtc, Ollama; the 4.3 GB vision model downloads only if you
+pick it in the setup wizard), sets up systemd services
 and prints the dashboard address. Open that address to create the admin account. macOS and Windows
 installs currently build from source; see [core/docs/DEPLOYMENT.md](core/docs/DEPLOYMENT.md).
 

@@ -294,7 +294,7 @@ builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>()
 // model is a ~577MB one-time download, and semantic search is opt-in, so a user who never enables
 // it shouldn't pay that cost just by starting the app. Still registered as a singleton so the
 // loaded ONNX sessions are reused once initialization does happen.
-builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
+builder.Services.AddSingletonWithHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same
@@ -364,7 +364,7 @@ builder.Services.AddSingleton(sp => new CloudVisionClient(
 // Same deferred-download singleton shape as ImageEmbeddingService: the detector's ~100MB ONNX
 // model is only fetched/loaded the first time an alert actually routes to the fastlocal backend,
 // so installs that never select it pay nothing at startup.
-builder.Services.AddHttpClient<IFastLocalDetector, FastLocalDetector>();
+builder.Services.AddSingletonWithHttpClient<IFastLocalDetector, FastLocalDetector>();
 builder.Services.AddSingleton(sp => new FastLocalVisionClient(
     sp.GetRequiredService<IFastLocalDetector>(),
     sp.GetRequiredService<IOptionsMonitor<FastLocalOptions>>(),
@@ -376,7 +376,8 @@ builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionCli
     sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
     sp.GetRequiredService<ILogger<FailoverVisionClient>>(),
-    () => sp.GetRequiredService<OllamaModelProvisioner>().ModelMissing));
+    () => sp.GetRequiredService<OllamaModelProvisioner>().ModelMissing,
+    (wait, ct) => sp.GetRequiredService<OllamaModelProvisioner>().EnsureLoadedAsync(wait, ct)));
 // All four share TClient = IAlertAction, so they must be registered with explicit, distinct
 // client names or they collapse into one - see AlertActionHttpClients for what that cost.
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();

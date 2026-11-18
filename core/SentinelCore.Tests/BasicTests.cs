@@ -755,20 +755,97 @@ public sealed class BasicTests
         Assert.Equal(1, ollama.CallCount);
     }
 
+    // FallbackEnabled off means "don't fall back to the other full AI" - not "drop the alert". A
+    // failed analysis notifies no one, so the fast detector answers instead.
     [Fact]
-    public async Task FailoverVisionClient_PropagatesFailure_WhenFallbackDisabled()
+    public async Task FailoverVisionClient_FallsBackToTheFastDetector_WhenFallbackDisabled()
     {
         var ollama = new FakeVisionClient("gemma3:4b");
         var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
         var client = new FailoverVisionClient(
-            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
+            ollama, cloud, fast,
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = false }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
             NullLogger<FailoverVisionClient>.Instance);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken));
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
         Assert.Equal(0, ollama.CallCount);
+    }
+
+    // The wizard's recommended setup: Ollama, no cloud, fallback off. An Ollama that is down used to
+    // fail every alert outright (found on a fresh install, 2026-11).
+    [Fact]
+    public async Task FailoverVisionClient_AFailingOllamaWithNoCloud_IsAnsweredByTheFastDetector()
+    {
+        var ollama = new FakeVisionClient("gemma4:e2b-it-qat") { ThrowOnAnalyze = true };
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var client = new FailoverVisionClient(
+            ollama, new FakeVisionClient("gpt-4o-mini"), fast,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama" }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions()),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.Equal(1, ollama.CallCount);
+        // ...but an install surviving on the detector is still reported as degraded.
+        ollama.Ready = false;
+        Assert.False(await client.IsReadyAsync(TestContext.Current.CancellationToken));
+    }
+
+    // The detector can't answer a gate check, so there it is still a failure.
+    [Fact]
+    public async Task FailoverVisionClient_AFailingGateCheck_IsNotHandedToTheFastDetector()
+    {
+        var ollama = new FakeVisionClient("gemma4:e2b-it-qat") { ThrowOnAnalyze = true };
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var client = new FailoverVisionClient(
+            ollama, new FakeVisionClient("gpt-4o-mini"), fast,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama" }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions()),
+            NullLogger<FailoverVisionClient>.Instance);
+        var gateCheck = new IncomingAlert(Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GateCheckDecision.ProfileName, "image/jpeg", "check.jpg", []);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.AnalyzeAsync(gateCheck, MakeProfile(), TestContext.Current.CancellationToken));
+        Assert.Equal(0, fast.CallCount);
+    }
+
+    // A model still loading after the wait: ordinary alerts get the detector now, gate checks keep
+    // waiting on Ollama (which is what they need).
+    [Fact]
+    public async Task FailoverVisionClient_WhileOllamaIsStillLoading_AlertsUseTheFastDetector_GateChecksWait()
+    {
+        var ollama = new FakeVisionClient("gemma4:e2b-it-qat");
+        var fast = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var loaded = false;
+        var asked = 0;
+        var client = new FailoverVisionClient(
+            ollama, new FakeVisionClient("gpt-4o-mini"), fast,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama", EscalationEnabled = true }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions()),
+            NullLogger<FailoverVisionClient>.Instance,
+            () => false,
+            (wait, _) => { asked++; Assert.Equal(FailoverVisionClient.OllamaLoadWait, wait); return Task.FromResult(loaded); });
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.Equal(0, ollama.CallCount);
+
+        var gateCheck = new IncomingAlert(Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GateCheckDecision.ProfileName, "image/jpeg", "check.jpg", []);
+        await client.AnalyzeAsync(gateCheck, MakeProfile(), TestContext.Current.CancellationToken);
+        Assert.Equal(1, ollama.CallCount);
+
+        loaded = true;
+        (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+        Assert.Equal("gemma4:e2b-it-qat", model);
+        Assert.Equal(3, asked);
     }
 
     [Fact]

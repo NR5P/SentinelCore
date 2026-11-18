@@ -109,6 +109,8 @@ public sealed class SelfMonitoringWorker : BackgroundService
         _queueTracker = new DegradationTracker(_queueTrackerThreshold);
     }
 
+    private bool _warnedCannotNotify;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -126,8 +128,10 @@ public sealed class SelfMonitoringWorker : BackgroundService
             var canNotify = telegramOptions.Enabled &&
                 !string.IsNullOrWhiteSpace(telegramOptions.BotToken) &&
                 !string.IsNullOrWhiteSpace(telegramOptions.ChatId);
-            if (!canNotify)
+            // Once per stretch rather than every 60s pass - see DailySummaryWorker.
+            if (!canNotify && !_warnedCannotNotify)
                 _logger.LogWarning("SelfMonitoring is enabled but Telegram is not configured; degradations will only be logged.");
+            _warnedCannotNotify = !canNotify;
 
             try
             {

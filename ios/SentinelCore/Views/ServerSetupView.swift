@@ -115,11 +115,32 @@ struct ServerSetupView: View {
     // A home-network address (an IP, a .local name, a bare computer name) gets http://, which is
     // how the dashboard ships. Anything else is an internet address and gets https://: typing
     // "home.example.com" must never send a password across the internet in plain text.
-    private func normalized(_ value: String) -> String {
+    private func normalized(_ value: String) -> String { Self.normalizedAddress(value) }
+
+    // A home-network address typed with no port also gets the dashboard's :3320. "192.168.1.50"
+    // on its own is what a new owner types, and it used to land on port 80 and an app that just
+    // said Offline. Only when nothing was typed but the address: a scheme or a port means the
+    // owner chose it.
+    static func normalizedAddress(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scheme = Self.isHomeNetworkAddress(trimmed) ? "http" : "https"
-        let withScheme = trimmed.contains("://") ? trimmed : "\(scheme)://\(trimmed)"
+        let withScheme: String
+        if trimmed.contains("://") {
+            withScheme = trimmed
+        } else if isHomeNetworkAddress(trimmed) {
+            withScheme = withDashboardPort("http://\(trimmed)")
+        } else {
+            withScheme = "https://\(trimmed)"
+        }
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    }
+
+    static let dashboardPort = 3320
+
+    private static func withDashboardPort(_ address: String) -> String {
+        guard var components = URLComponents(string: address), components.host?.isEmpty == false,
+              components.port == nil else { return address }
+        components.port = dashboardPort
+        return components.string ?? address
     }
 
     static func isHomeNetworkAddress(_ typed: String) -> Bool {

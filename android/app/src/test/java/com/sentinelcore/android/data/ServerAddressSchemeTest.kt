@@ -16,7 +16,15 @@ class ServerAddressSchemeTest {
         assertEquals("http://mediabox:3320", normalize("mediabox:3320"))
         assertEquals("http://localhost:3320", normalize("localhost:3320"))
         assertEquals("http://[fe80::1]:3320", normalize("[fe80::1]:3320"))
-        assertEquals("http://nas.home.arpa", normalize("nas.home.arpa"))
+        assertEquals("http://nas.home.arpa:3320", normalize("nas.home.arpa"))
+    }
+
+    @Test
+    fun `a home address with no port gets the dashboard port`() {
+        assertEquals("http://192.168.1.50:3320", normalize("192.168.1.50"))
+        assertEquals("http://mediabox:3320", normalize("mediabox/"))
+        assertEquals("http://192.168.1.50:80", normalize("192.168.1.50:80"))
+        assertEquals("http://192.168.1.50", normalize("http://192.168.1.50"))
     }
 
     @Test
