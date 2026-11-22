@@ -62,6 +62,12 @@ public sealed class TriggerConfigDto
     // Nullable for the same old-client reason as the fields above it.
     public bool? KeepOnlyAlertable { get; set; }
 
+    // The fast detector's categories for this camera (FastLocalCategories keys). Null means "this
+    // client doesn't know about categories" and keeps whatever is stored - it does NOT mean "all".
+    // A client that wants every category sends them all, which is stored as null. An empty list is
+    // refused (see Validate). See TriggerConfig.FastLocalClasses.
+    public List<string>? FastLocalClasses { get; set; }
+
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 
     public bool UsesThreshold =>
@@ -152,7 +158,8 @@ public static class TriggerEndpoints
                 nightEnabled, nightStart, nightEnd,
                 // Same absent-key merge as the night window, for the same reason.
                 dto.BypassFastLocal ?? existing?.BypassFastLocal ?? false,
-                dto.KeepOnlyAlertable ?? existing?.KeepOnlyAlertable ?? false);
+                dto.KeepOnlyAlertable ?? existing?.KeepOnlyAlertable ?? false,
+                ResolveFastLocalClasses(dto, existing));
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");
@@ -227,6 +234,16 @@ public static class TriggerEndpoints
         }).RequireAuthorization();
     }
 
+    // Absent key: keep what's stored (an old client, or one that never showed the picker). Every
+    // category ticked: null, so "all" is stored one way only and a category added to the detector
+    // later is included on these cameras too. Otherwise the normalized subset.
+    public static IReadOnlyList<string>? ResolveFastLocalClasses(TriggerConfigDto dto, TriggerConfig? existing)
+    {
+        if (dto.FastLocalClasses is null) return existing?.FastLocalClasses;
+        var normalized = FastLocalCategories.Normalize(dto.FastLocalClasses)!;
+        return normalized.Count == FastLocalCategories.Keys.Count ? null : normalized;
+    }
+
     // Takes the already-merged night window alongside the DTO, because those three are the only
     // fields whose stored value can differ from what the request carried - see ResolveNightWindow.
     // Public for the same reason ResolveNightWindow is: it's the gate in front of a setting whose
@@ -262,6 +279,19 @@ public static class TriggerEndpoints
 
             if (zone.Name.Trim().Length > 50)
                 errors.Add($"\"{label}\" name is too long (50 characters max).");
+        }
+
+        if (dto.FastLocalClasses is { } classes)
+        {
+            // Empty would save happily and then never escalate anything to the full AI - the
+            // camera goes blind without saying so. Turning quick detection off for the camera is
+            // what BypassFastLocal is for.
+            if (classes.Count == 0)
+                errors.Add("Pick at least one quick-detection category.");
+
+            var unknown = FastLocalCategories.Unknown(classes);
+            if (unknown.Count > 0)
+                errors.Add($"Unknown quick-detection categor{(unknown.Count == 1 ? "y" : "ies")}: {string.Join(", ", unknown)}.");
         }
 
         if (dto.CooldownSeconds < 0)

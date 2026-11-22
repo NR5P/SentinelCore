@@ -541,6 +541,13 @@ app.MapPost("/api/blueiris/alert", async (
     // zone asked for it, so "missing" and "false" mean the same thing here.
     var bypassFastLocal = string.Equals(form["bypassFastLocal"].ToString().Trim(), "true", StringComparison.OrdinalIgnoreCase);
 
+    // Comma-separated category keys, sent only by a camera that narrowed them - absent means every
+    // category. See TriggerConfig.FastLocalClasses.
+    var fastLocalClassesField = form["fastLocalClasses"].ToString();
+    var fastLocalClasses = string.IsNullOrWhiteSpace(fastLocalClassesField)
+        ? null
+        : FastLocalCategories.Normalize(fastLocalClassesField.Split(',', StringSplitOptions.RemoveEmptyEntries));
+
     var alert = new IncomingAlert(
         Guid.NewGuid(), camera, form["alertId"].ToString(), occurredAt,
         DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray())
@@ -548,7 +555,8 @@ app.MapPost("/api/blueiris/alert", async (
         ExtraFrames = extraFrames,
         LinkedCameras = string.IsNullOrWhiteSpace(linkedCameras) ? null : linkedCameras,
         IncidentId = string.IsNullOrWhiteSpace(incidentId) ? null : incidentId,
-        BypassFastLocal = bypassFastLocal
+        BypassFastLocal = bypassFastLocal,
+        FastLocalClasses = fastLocalClasses is { Count: > 0 } ? fastLocalClasses : null
     };
 
     // Write the image and the queued row before handing the alert to the in-memory queue. The

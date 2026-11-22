@@ -304,6 +304,13 @@ struct TriggerConfig: Codable, Equatable {
     var bypassFastLocal: Bool?
     var keepOnlyAlertable: Bool?
 
+    // Which of the fast detector's categories count on this camera - see FastLocalCategories in
+    // core/SentinelCore/FastLocalVisionClient.cs. nil on the way in means every category (the
+    // server stores "all" as null); nil on the way out omits the key, which the server reads as
+    // "keep what's stored". The editor always sends the full ticked list. An empty list is refused
+    // with a 400, so the editor blocks that before it gets there.
+    var fastLocalClasses: [String]?
+
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
     // never has to special-case the migration.
@@ -327,6 +334,20 @@ struct TriggerConfig: Codable, Equatable {
     var resolvedBypassFastLocal: Bool { bypassFastLocal ?? false }
 
     var resolvedKeepOnlyAlertable: Bool { keepOnlyAlertable ?? false }
+
+    // nil (or a server older than the picker) means every category. Unknown keys are dropped so a
+    // category a newer server added can't leave a tick the picker has no chip for.
+    var resolvedFastLocalClasses: Set<String> {
+        guard let fastLocalClasses else { return Set(TriggerConfig.fastLocalCategoryKeys) }
+        let known = Set(TriggerConfig.fastLocalCategoryKeys)
+        return Set(fastLocalClasses.map { $0.lowercased() }).intersection(known)
+    }
+
+    // The server's FastLocalCategories.Keys, in the order the pickers show them.
+    static let fastLocalCategoryKeys = [
+        "person", "car", "truck", "motorcycle", "bicycle", "bus",
+        "dog", "cat", "bird", "horse", "cow", "sheep", "bear", "elephant",
+    ]
 }
 
 extension TriggerZone {

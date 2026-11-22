@@ -272,6 +272,13 @@ data class TriggerConfig(
     // of by whether anything was in it, so the coop's own chickens stop confirming every trigger.
     val bypassFastLocal: Boolean? = null,
     val keepOnlyAlertable: Boolean? = null,
+
+    // Which categories the fast detector looks for on this camera (FastLocalCategories keys).
+    // Detections of anything else are ignored there - no escalation to the full AI, no alert.
+    // Null is both "the server says every category" (how it stores all-ticked) and "a server
+    // older than the picker"; either way the editor shows everything ticked. On the way out null
+    // omits the key, which keeps what's stored; the editor always sends the full ticked list.
+    val fastLocalClasses: List<String>? = null,
 ) {
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
@@ -295,6 +302,46 @@ data class TriggerConfig(
     fun resolvedBypassFastLocal(): Boolean = bypassFastLocal ?: false
 
     fun resolvedKeepOnlyAlertable(): Boolean = keepOnlyAlertable ?: false
+
+    // The ticked set for the picker: every category when the server sent none, otherwise the
+    // known keys it sent. An unknown key (a category a newer server added) is dropped rather than
+    // shown, since this build has no chip for it and the server refuses keys it doesn't know.
+    fun resolvedFastLocalClasses(): Set<String> =
+        fastLocalClasses?.let { FastLocalCategories.normalize(it).toSet() }
+            ?: FastLocalCategories.keys.toSet()
+}
+
+// Mirrors core's FastLocalCategories (FastLocalVisionClient.cs): the keys the fast detector can be
+// told to look for, in the pickers' display order.
+object FastLocalCategories {
+    val keys: List<String> = listOf(
+        "person", "car", "truck", "motorcycle", "bicycle", "bus",
+        "dog", "cat", "bird", "horse", "cow", "sheep", "bear", "elephant",
+    )
+
+    fun label(key: String): String = key.replaceFirstChar { it.uppercase() }
+
+    // Known keys only, lower-cased, de-duplicated and in display order - the same normalisation
+    // the server applies, so what's sent is exactly what will be stored.
+    fun normalize(values: Collection<String>): List<String> {
+        val wanted = values.map { it.trim().lowercase() }.toSet()
+        return keys.filter { it in wanted }
+    }
+
+    // Null when the key is absent or JSON null (= every category); otherwise the array's strings.
+    fun parse(json: JSONObject): List<String>? {
+        if (json.isNull("fastLocalClasses")) return null
+        val array = json.optJSONArray("fastLocalClasses") ?: return null
+        return (0 until array.length()).mapNotNull { index -> array.optString(index).takeIf { it.isNotBlank() } }
+    }
+
+    // Writes the key only when the config carries a choice; null leaves it absent so the server
+    // keeps what's stored. Never writes an empty array - the server rejects that with a 400.
+    fun write(json: JSONObject, classes: List<String>?) {
+        val list = classes?.let(::normalize) ?: return
+        if (list.isEmpty()) return
+        json.put("fastLocalClasses", JSONArray(list))
+    }
 }
 
 data class NightWindow(val enabled: Boolean, val startHour: Int, val endHour: Int)

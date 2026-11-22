@@ -711,6 +711,10 @@
               <label class="switch"><input type="checkbox" id="zone-bypass-fastlocal" /><span class="switch-track"></span></label>
               <span class="field-label">Always use the full AI (skip the fast detector)</span>
             </div>
+            <div class="field-row field-row-wide" id="zone-fastlocal-classes-row" data-tip="Which things the fast detector looks for on this camera. Anything else it sees is ignored, as if it wasn't there: it isn't sent on to the full AI and doesn't alert. On a gate or driveway, leaving animals off stops a cat or a bird from costing a two-minute full analysis that could only ever say 'an animal'. Only used when Fast Local Detection is the primary backend, and not at all when this camera always uses the full AI. All of them by default.">
+              <span class="field-label">Fast detector looks for</span>
+              <span class="auto-days zone-classes" id="zone-fastlocal-classes"></span>
+            </div>
             <div class="field-row field-row-wide field-checkbox-row" data-tip="Judges this camera's triggers by whether the AI would have alerted on the frame, instead of by whether anything was in it. The normal bar is &quot;a person, vehicle, package or animal is there&quot;, which is right for a driveway but wrong at a chicken coop: the chickens are animals, they are always in shot, and they confirm every trigger - so the tab fills with them and every clip is kept, while the raccoon you actually care about is lost in the pile. With this on, ordinary chicken activity is rejected: no event in the tab, no video kept, no alert. A predator still gets all three. The snapshot is kept either way, so 'show hidden' still shows you everything that fired. Nothing is rejected because the AI was slow, unreachable or errored. Off by default.">
               <label class="switch"><input type="checkbox" id="zone-keep-only-alertable" /><span class="switch-track"></span></label>
               <span class="field-label">Only keep what the AI would alert on</span>

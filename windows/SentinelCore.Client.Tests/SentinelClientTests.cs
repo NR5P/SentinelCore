@@ -289,6 +289,71 @@ public class SentinelClientTests
     }
 
     [Fact]
+    public async Task A_camera_with_no_fast_detector_categories_reads_as_every_category()
+    {
+        // The server stores "every category" as null and sends it back as null (or not at all on an
+        // older server); either way the picker has to show everything ticked.
+        const string json = """
+            {"enabled":true,"zonePolygon":[],"minTriggerArea":0.02,"cooldownSeconds":30,
+             "maxTriggersPerMinute":6,"shadowSensitivity":50,"recordClips":false,"clipPreSeconds":5,
+             "clipPostSeconds":10,"sendToAlerts":true,"alertProfile":"default","fastLocalClasses":null}
+            """;
+        using var server = new FakeServer().OnGet($"/api/cameras/{Guid.Empty}/trigger-config", json);
+        using var client = ClientFor(server);
+
+        var config = await client.TriggerConfigAsync(Guid.Empty);
+
+        Assert.Null(config.FastLocalClasses);
+        Assert.Equal(FastLocalCategories.Keys, config.ResolvedFastLocalClasses);
+        Assert.Equal(14, FastLocalCategories.Keys.Count);
+        Assert.Equal("person", FastLocalCategories.Keys[0]);
+        Assert.Equal("Motorcycle", FastLocalCategories.Label("motorcycle"));
+    }
+
+    [Fact]
+    public async Task Fast_detector_categories_are_read_back_as_the_server_sent_them()
+    {
+        const string json = """
+            {"enabled":true,"zonePolygon":[],"minTriggerArea":0.02,"cooldownSeconds":30,
+             "maxTriggersPerMinute":6,"shadowSensitivity":50,"recordClips":false,"clipPreSeconds":5,
+             "clipPostSeconds":10,"sendToAlerts":true,"alertProfile":"default",
+             "fastLocalClasses":["person","dog"]}
+            """;
+        using var server = new FakeServer().OnGet($"/api/cameras/{Guid.Empty}/trigger-config", json);
+        using var client = ClientFor(server);
+
+        var config = await client.TriggerConfigAsync(Guid.Empty);
+
+        Assert.Equal(new[] { "person", "dog" }, config.FastLocalClasses);
+        Assert.Equal(new[] { "person", "dog" }, config.ResolvedFastLocalClasses);
+    }
+
+    [Fact]
+    public async Task Saving_a_trigger_config_sends_the_ticked_fast_detector_categories()
+    {
+        using var server = new FakeServer().On("PUT", $"/api/cameras/{Guid.Empty}/trigger-config", "{}");
+        using var client = ClientFor(server);
+
+        await client.SaveTriggerConfigAsync(
+            Guid.Empty,
+            new TriggerConfig { Enabled = true, FastLocalClasses = new List<string> { "person", "car" } });
+
+        Assert.Contains("\"fastLocalClasses\":[\"person\",\"car\"]", server.Bodies.Single());
+    }
+
+    [Fact]
+    public async Task Saving_a_trigger_config_omits_null_fast_detector_categories_so_the_server_keeps_them()
+    {
+        // Absent means "keep what's stored"; it must never go out as [] (a 400) or as null-as-all.
+        using var server = new FakeServer().On("PUT", $"/api/cameras/{Guid.Empty}/trigger-config", "{}");
+        using var client = ClientFor(server);
+
+        await client.SaveTriggerConfigAsync(Guid.Empty, new TriggerConfig { Enabled = true });
+
+        Assert.DoesNotContain("fastLocalClasses", server.Bodies.Single());
+    }
+
+    [Fact]
     public async Task Saving_a_trigger_config_sends_an_empty_zone_list_when_the_editor_really_cleared_it()
     {
         using var server = new FakeServer().On("PUT", $"/api/cameras/{Guid.Empty}/trigger-config", "{}");

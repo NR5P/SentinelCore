@@ -957,6 +957,10 @@ public sealed class BackupService(
         NightStartHour = config.NightStartHour,
         NightEndHour = config.NightEndHour,
         BypassFastLocal = config.BypassFastLocal,
-        KeepOnlyAlertable = config.KeepOnlyAlertable
+        KeepOnlyAlertable = config.KeepOnlyAlertable,
+        // Null (every category) is exported as the full list: on import a missing key would mean
+        // "keep what's there", which on a fresh install happens to be all - but restoring over an
+        // install that had narrowed it would quietly keep the narrowed list.
+        FastLocalClasses = [.. config.FastLocalClasses ?? FastLocalCategories.Keys]
     };
 }

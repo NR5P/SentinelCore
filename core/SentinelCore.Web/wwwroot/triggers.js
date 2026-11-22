@@ -137,6 +137,9 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-night-end").value = config.nightEndHour ?? 7;
         document.getElementById("zone-bypass-fastlocal").checked = !!config.bypassFastLocal;
         document.getElementById("zone-keep-only-alertable").checked = !!config.keepOnlyAlertable;
+        renderFastLocalClasses(config.fastLocalClasses);
+      } else {
+        renderFastLocalClasses(null);
       }
 
       const profileNames = profilesResp.ok ? await profilesResp.json() : [];
@@ -464,6 +467,33 @@ window.GateWatchTriggers = (function () {
   // An hour box, read so that 0 survives and anything unusable falls back to the caller's default
   // rather than to midnight. Out-of-range values are left alone for the server to reject with a
   // message, which is more use than clamping them silently to something the user didn't type.
+  // The fast detector's categories, in the server's order (FastLocalCategories in
+  // FastLocalVisionClient.cs) - the keys are the wire format, the labels are only for display.
+  const FAST_LOCAL_CLASSES = [
+    ["person", "Person"], ["car", "Car"], ["truck", "Truck"], ["motorcycle", "Motorcycle"],
+    ["bicycle", "Bicycle"], ["bus", "Bus"], ["dog", "Dog"], ["cat", "Cat"], ["bird", "Bird"],
+    ["horse", "Horse"], ["cow", "Cow"], ["sheep", "Sheep"], ["bear", "Bear"], ["elephant", "Elephant"]
+  ];
+
+  // null/absent from the server means every category.
+  function renderFastLocalClasses(selected) {
+    const box = document.getElementById("zone-fastlocal-classes");
+    if (!box) return;
+    const on = new Set(Array.isArray(selected) ? selected : FAST_LOCAL_CLASSES.map(([key]) => key));
+    box.innerHTML = FAST_LOCAL_CLASSES.map(([key, label]) =>
+      `<button type="button" class="org-chip${on.has(key) ? " active" : ""}" data-class="${key}" aria-pressed="${on.has(key)}">${label}</button>`
+    ).join("");
+    box.querySelectorAll("button").forEach(chip => chip.addEventListener("click", () => {
+      const active = !chip.classList.contains("active");
+      chip.classList.toggle("active", active);
+      chip.setAttribute("aria-pressed", String(active));
+    }));
+  }
+
+  function selectedFastLocalClasses() {
+    return [...document.querySelectorAll("#zone-fastlocal-classes button.active")].map(b => b.dataset.class);
+  }
+
   function hourOrDefault(elementId, fallback) {
     const parsed = parseInt(document.getElementById(elementId).value, 10);
     return Number.isNaN(parsed) ? fallback : parsed;
@@ -580,8 +610,14 @@ window.GateWatchTriggers = (function () {
       nightStartHour: hourOrDefault("zone-night-start", 21),
       nightEndHour: hourOrDefault("zone-night-end", 7),
       bypassFastLocal: document.getElementById("zone-bypass-fastlocal").checked,
-      keepOnlyAlertable: document.getElementById("zone-keep-only-alertable").checked
+      keepOnlyAlertable: document.getElementById("zone-keep-only-alertable").checked,
+      // Always the full ticked list - all of them is stored as "all" server-side.
+      fastLocalClasses: selectedFastLocalClasses()
     };
+    if (body.fastLocalClasses.length === 0) {
+      showEditorError("Pick at least one thing for the fast detector to look for.");
+      return;
+    }
 
     try {
       const response = await fetch(`/api/cameras/${currentCamera.id}/trigger-config`, {

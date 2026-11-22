@@ -40,6 +40,9 @@ public partial class TriggerZoneEditorWindow : Window
 
     private TriggerConfig _config = new();
     private List<TriggerZone> _zones = new();
+
+    // One checkbox per fast-detector category, in FastLocalCategories.Keys order.
+    private readonly List<(string Key, CheckBox Box)> _fastLocalBoxes = new();
     private int _selectedZone;
     private int _draggingPoint = -1;
 
@@ -53,6 +56,7 @@ public partial class TriggerZoneEditorWindow : Window
         _model = model;
         _camera = camera;
         InitializeComponent();
+        BuildFastLocalClassBoxes();
 
         Title = $"Trigger zones - {camera.Name}";
         SizeChanged += (_, _) => Redraw();
@@ -65,6 +69,34 @@ public partial class TriggerZoneEditorWindow : Window
             await LoadFrameAsync();
         };
     }
+
+    private void BuildFastLocalClassBoxes()
+    {
+        foreach (var key in FastLocalCategories.Keys)
+        {
+            var box = new CheckBox
+            {
+                Content = FastLocalCategories.Label(key),
+                IsChecked = true,
+                Margin = new Thickness(0, 4, 14, 4),
+                MinWidth = 90,
+            };
+            _fastLocalBoxes.Add((key, box));
+            FastLocalClassesPanel.Children.Add(box);
+        }
+    }
+
+    private void OnBypassFastLocalChanged(object sender, RoutedEventArgs e) => UpdateFastLocalClassesEnabled();
+
+    private void UpdateFastLocalClassesEnabled()
+    {
+        // Checked/Unchecked can fire from XAML before the section exists.
+        if (FastLocalClassesSection is null) return;
+        FastLocalClassesSection.IsEnabled = BypassFastLocalToggle.IsChecked != true;
+    }
+
+    private List<string> TickedFastLocalClasses() =>
+        _fastLocalBoxes.Where(item => item.Box.IsChecked == true).Select(item => item.Key).ToList();
 
     // ------------------------------------------------------------------ Loading
 
@@ -98,6 +130,11 @@ public partial class TriggerZoneEditorWindow : Window
             // checkboxes still have to show something.
             BypassFastLocalToggle.IsChecked = _config.ResolvedBypassFastLocal;
             KeepOnlyAlertableToggle.IsChecked = _config.ResolvedKeepOnlyAlertable;
+
+            // Null from the server means every category, so everything shows ticked.
+            var ticked = new HashSet<string>(_config.ResolvedFastLocalClasses, StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, box) in _fastLocalBoxes) box.IsChecked = ticked.Contains(key);
+            UpdateFastLocalClassesEnabled();
 
             NightToggle.IsChecked = _config.ResolvedNightEnabled;
             NightStartBox.Text = _config.ResolvedNightStartHour.ToString(CultureInfo.InvariantCulture);
@@ -444,6 +481,15 @@ public partial class TriggerZoneEditorWindow : Window
             return;
         }
 
+        // The server refuses an empty list (the camera would never escalate anything). While the
+        // bypass is on the picker is greyed out and does nothing, so an empty set there is left
+        // unsent instead - see BuildConfigForSave.
+        if (BypassFastLocalToggle.IsChecked != true && TickedFastLocalClasses().Count == 0)
+        {
+            Message("Pick at least one thing for the fast detector to look for.");
+            return;
+        }
+
         if (!TryReadInt(CooldownBox, "cooldown", out var cooldown) ||
             !TryReadInt(MaxPerMinuteBox, "most triggers per minute", out var maxPerMinute) ||
             !TryReadInt(PreSecondsBox, "seconds before", out var preSeconds) ||
@@ -518,6 +564,11 @@ public partial class TriggerZoneEditorWindow : Window
             // about both switches, so it owns their value.
             BypassFastLocal = BypassFastLocalToggle.IsChecked == true,
             KeepOnlyAlertable = KeepOnlyAlertableToggle.IsChecked == true,
+
+            // The full ticked list, always - all ticked is stored as "all" by the server. The one
+            // exception is nothing ticked while the bypass is on (save is blocked otherwise): null
+            // omits the key, so the stored categories are kept rather than sending a rejected [].
+            FastLocalClasses = TickedFastLocalClasses() is { Count: > 0 } ticked ? ticked : null,
         };
     }
 

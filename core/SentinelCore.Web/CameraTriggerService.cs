@@ -126,7 +126,7 @@ public sealed class CameraTriggerService(
             var released = false;
             try
             {
-                var (profile, bypassFastLocal, keepOnlyAlertable) = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
+                var (profile, bypassFastLocal, keepOnlyAlertable, fastLocalClasses) = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
                 logger.LogInformation(
                     "Trigger fired for camera {CameraId} ({Name}) from {Source}, profile {Profile}",
                     camera.Id, camera.Name, request.Source, profile);
@@ -135,7 +135,7 @@ public sealed class CameraTriggerService(
                 // immediately, so this costs a loopback round-trip and lets the caller be told the
                 // difference between "queued for analysis" and "the pipeline refused it".
                 var forwarded = await alertForwarder.ForwardAsync(
-                    bytes, [], camera.Name, profile, bypassFastLocal, now, null, incidentId, cancellationToken);
+                    bytes, [], camera.Name, profile, bypassFastLocal, fastLocalClasses, now, null, incidentId, cancellationToken);
 
                 // Same as the zone-trigger path: record which alert this became so the Events tab can
                 // show one card for the moment rather than a motion row beside an analysis row.
@@ -194,7 +194,7 @@ public sealed class CameraTriggerService(
     // camera is pointed at, not what this one caller wants. A requested profile therefore still gets
     // the camera's own routing - a coop fired by a sensor needs the full model for the same reason
     // motion does. One lookup serves both so an explicit profile doesn't skip reading the row.
-    private async Task<(string Profile, bool BypassFastLocal, bool KeepOnlyAlertable)> ResolveProfileAsync(
+    private async Task<(string Profile, bool BypassFastLocal, bool KeepOnlyAlertable, IReadOnlyList<string>? FastLocalClasses)> ResolveProfileAsync(
         Guid cameraId, string? requested, CancellationToken cancellationToken)
     {
         var config = await configStore.GetAsync(cameraId, cancellationToken);
@@ -202,6 +202,6 @@ public sealed class CameraTriggerService(
             ? requested.Trim()
             : string.IsNullOrWhiteSpace(config?.AlertProfile) ? "default" : config.AlertProfile;
 
-        return (profile, config?.BypassFastLocal ?? false, config?.KeepOnlyAlertable ?? false);
+        return (profile, config?.BypassFastLocal ?? false, config?.KeepOnlyAlertable ?? false, config?.FastLocalClasses);
     }
 }

@@ -331,6 +331,12 @@ public sealed class TriggerConfig
     public bool? BypassFastLocal { get; set; }
     public bool? KeepOnlyAlertable { get; set; }
 
+    // Which fast-detector categories count on this camera - see FastLocalCategories. Null on the
+    // way in means every category (the server stores "all" as null); null on the way out omits the
+    // key, which the server reads as "keep what's stored". A screen that shows the picker always
+    // sends the full ticked list. An empty list is refused by the server with a 400.
+    public List<string>? FastLocalClasses { get; set; }
+
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
     // never has to special-case the migration.
@@ -364,6 +370,28 @@ public sealed class TriggerConfig
     [JsonIgnore] public bool ResolvedBypassFastLocal => BypassFastLocal ?? false;
 
     [JsonIgnore] public bool ResolvedKeepOnlyAlertable => KeepOnlyAlertable ?? false;
+
+    // Null means every category, so the picker shows everything ticked.
+    [JsonIgnore]
+    public List<string> ResolvedFastLocalClasses =>
+        FastLocalClasses ?? FastLocalCategories.Keys.ToList();
+}
+
+/// <summary>
+/// The categories the fast local detector can be told to look for on a camera, in display order.
+/// Mirrors the server's FastLocalCategories.Keys; detections of an unticked category are ignored by
+/// the fast detector on that camera (no escalation to the full AI, no alert).
+/// </summary>
+public static class FastLocalCategories
+{
+    public static IReadOnlyList<string> Keys { get; } = new[]
+    {
+        "person", "car", "truck", "motorcycle", "bicycle", "bus",
+        "dog", "cat", "bird", "horse", "cow", "sheep", "bear", "elephant",
+    };
+
+    public static string Label(string key) =>
+        string.IsNullOrEmpty(key) ? key : char.ToUpperInvariant(key[0]) + key[1..];
 }
 
 public sealed class PromptProfileName

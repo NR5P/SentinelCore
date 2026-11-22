@@ -9,6 +9,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.data.Camera
+import com.sentinelcore.android.data.FastLocalCategories
 import com.sentinelcore.android.data.Point2D
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.TriggerConfig
@@ -138,6 +141,7 @@ private fun nightWindowHours(start: Int, end: Int): Int {
     return if (span > 0) span else span + 24
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CameraZoneEditorScreen(
     camera: Camera,
@@ -170,6 +174,8 @@ fun CameraZoneEditorScreen(
     // the same thing a freshly migrated one does.
     var bypassFastLocal by remember { mutableStateOf(false) }
     var keepOnlyAlertable by remember { mutableStateOf(false) }
+    // Every category ticked is the server's default (it sends null for it).
+    var fastLocalClasses by remember { mutableStateOf(FastLocalCategories.keys.toSet()) }
     var nightWindowEnabled by remember { mutableStateOf(false) }
     var nightStartHour by remember { mutableIntStateOf(21) }
     var nightEndHour by remember { mutableIntStateOf(7) }
@@ -222,6 +228,7 @@ fun CameraZoneEditorScreen(
         // switches still have to show something.
         bypassFastLocal = config.resolvedBypassFastLocal()
         keepOnlyAlertable = config.resolvedKeepOnlyAlertable()
+        fastLocalClasses = config.resolvedFastLocalClasses()
     }
 
     suspend fun load() {
@@ -270,6 +277,12 @@ fun CameraZoneEditorScreen(
         if (nightWindowEnabled && nightStartHour == nightEndHour) {
             return "The overnight pause can't start and end at the same hour - that window is zero hours long."
         }
+        // The server refuses an empty list: the fast detector would escalate nothing and the
+        // camera would go quiet without saying so. Only while the picker is live - with the full
+        // AI always on, the list isn't sent at all (see save()).
+        if (!bypassFastLocal && fastLocalClasses.isEmpty()) {
+            return "Pick at least one thing for the fast detector to look for."
+        }
         return null
     }
 
@@ -317,6 +330,10 @@ fun CameraZoneEditorScreen(
                     // about both switches, so it owns their value.
                     bypassFastLocal = bypassFastLocal,
                     keepOnlyAlertable = keepOnlyAlertable,
+                    // The full ticked list, always (all ticked is stored as "all"). Null only when
+                    // nothing is ticked while the full AI is on - the picker is disabled then, and
+                    // an empty list would be a 400; null keeps what's stored.
+                    fastLocalClasses = FastLocalCategories.normalize(fastLocalClasses).ifEmpty { null },
                 )
                 val saved = model.saveTriggerConfig(camera.id, config)
                 apply(saved)
@@ -600,6 +617,45 @@ fun CameraZoneEditorScreen(
                                     "real: every trigger becomes a full analysis of around two " +
                                     "minutes, so raise the cooldown above to match or the queue " +
                                     "backs up and starts dropping frames unanalysed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text("Fast Detector Looks For")
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                FastLocalCategories.keys.forEach { key ->
+                                    FilterChip(
+                                        selected = key in fastLocalClasses,
+                                        enabled = !bypassFastLocal,
+                                        onClick = {
+                                            fastLocalClasses = if (key in fastLocalClasses) {
+                                                fastLocalClasses - key
+                                            } else {
+                                                fastLocalClasses + key
+                                            }
+                                        },
+                                        label = { Text(FastLocalCategories.label(key)) },
+                                    )
+                                }
+                            }
+                            if (!bypassFastLocal && fastLocalClasses.isEmpty()) {
+                                Text(
+                                    "Pick at least one thing for the fast detector to look for.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            Text(
+                                if (bypassFastLocal) {
+                                    "Not used while Always Use the Full AI is on - every trigger " +
+                                        "goes to the full AI regardless."
+                                } else {
+                                    "The fast detector ignores anything unticked on this camera: " +
+                                        "no escalation to the full AI and no alert. Untick what " +
+                                        "always wanders through, like a pet cat or passing cars."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

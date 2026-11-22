@@ -42,6 +42,11 @@ public sealed record IncomingAlert(
     // restart routes normally. Same as LinkedCameras/IncidentId today, and the cost is one
     // detector-gated analysis for an alert that was already interrupted.
     public bool BypassFastLocal { get; init; }
+
+    // The camera's fast-detector categories (TriggerConfig.FastLocalClasses) - null means every
+    // category. Same origin and same transience as BypassFastLocal above; read only by
+    // FastLocalVisionClient.
+    public IReadOnlyList<string>? FastLocalClasses { get; init; }
 }
 
 public sealed record AcceptedAlertResponse(Guid Id, string Status, string StatusUrl);

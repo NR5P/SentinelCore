@@ -24,6 +24,7 @@ public sealed class AlertForwarder(
 {
     public async Task<AlertForwardResult> ForwardAsync(
         byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, bool bypassFastLocal,
+        IReadOnlyList<string>? fastLocalClasses,
         DateTimeOffset occurredAt,
         IReadOnlyList<string>? linkedCameraNames, string? incidentId, CancellationToken cancellationToken)
     {
@@ -57,6 +58,9 @@ public sealed class AlertForwarder(
         // See TriggerConfig.BypassFastLocal.
         if (bypassFastLocal)
             content.Add(new StringContent("true"), "bypassFastLocal");
+        // Same: only a camera that narrowed its categories sends them. See TriggerConfig.FastLocalClasses.
+        if (fastLocalClasses is { Count: > 0 })
+            content.Add(new StringContent(string.Join(",", fastLocalClasses)), "fastLocalClasses");
         // Only present for a camera that belongs to a Camera Group - see
         // TriggerZoneMonitor.RecordCompanionCamerasAsync/MaybeTriggerAsync. linkedCameras is a
         // plain display string (comma-joined names), not a foreign key - the main app doesn't

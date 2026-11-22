@@ -2765,6 +2765,8 @@ class SentinelRepository(
             // "off" the editor would then save back over whatever was stored.
             bypassFastLocal = if (json.isNull("bypassFastLocal")) null else json.optBoolean("bypassFastLocal"),
             keepOnlyAlertable = if (json.isNull("keepOnlyAlertable")) null else json.optBoolean("keepOnlyAlertable"),
+            // Null = every category (the server stores all-ticked that way) or an older server.
+            fastLocalClasses = FastLocalCategories.parse(json),
         )
     }
 
@@ -2843,6 +2845,7 @@ class SentinelRepository(
         if (keepOnlyAlertable != null) {
             json.put("keepOnlyAlertable", keepOnlyAlertable)
         }
+        FastLocalCategories.write(json, fastLocalClasses)
         return json
     }
 

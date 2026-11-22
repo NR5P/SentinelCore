@@ -1392,8 +1392,9 @@ private struct AutomationChip: View {
     }
 }
 
-// Chips that wrap onto as many rows as they need.
-private struct AutomationFlowLayout: Layout {
+// Chips that wrap onto as many rows as they need. Also used by the trigger zone editor's
+// fast-detector category picker.
+struct AutomationFlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

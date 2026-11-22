@@ -922,6 +922,7 @@ public sealed class TriggerZoneMonitor(
             if (session.Config.SendToAlerts)
                 _ = ForwardToAlertPipelineAsync(
                     camera, bytes, session.MultiFrame, session.Config.AlertProfile, session.Config.BypassFastLocal,
+                    session.Config.FastLocalClasses,
                     session.Config.KeepOnlyAlertable, now, linkedCameraNames, incidentId,
                     trigger.Id, gated, pick);
         }
@@ -1027,7 +1028,7 @@ public sealed class TriggerZoneMonitor(
                     var alertProfile = memberConfig?.AlertProfile ?? "default";
                     _ = ForwardToAlertPipelineAsync(
                         memberCamera, snapshot, new MultiFrameOptions(), alertProfile,
-                        memberConfig?.BypassFastLocal ?? false, memberConfig?.KeepOnlyAlertable ?? false,
+                        memberConfig?.BypassFastLocal ?? false, memberConfig?.FastLocalClasses, memberConfig?.KeepOnlyAlertable ?? false,
                         occurredAt, [], incidentId,
                         companionTrigger.Id, companionGated);
                 }
@@ -1054,7 +1055,7 @@ public sealed class TriggerZoneMonitor(
     // alert has been queued.
     private async Task ForwardToAlertPipelineAsync(
         Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, bool bypassFastLocal,
-        bool keepOnlyAlertable, DateTimeOffset occurredAt,
+        IReadOnlyList<string>? fastLocalClasses, bool keepOnlyAlertable, DateTimeOffset occurredAt,
         IReadOnlyList<string> linkedCameraNames, string? incidentId, Guid triggerId, bool gated,
         RewindPick? pick = null)
     {
@@ -1086,7 +1087,7 @@ public sealed class TriggerZoneMonitor(
             }
 
             var forwarded = await alertForwarder.ForwardAsync(
-                imageBytes, extraFrames, camera.Name, profile, bypassFastLocal, occurredAt, linkedCameraNames, incidentId, _stoppingToken);
+                imageBytes, extraFrames, camera.Name, profile, bypassFastLocal, fastLocalClasses, occurredAt, linkedCameraNames, incidentId, _stoppingToken);
 
             // Recorded before the verdict is waited on, and regardless of gating: the join is what
             // the Events tab renders from, and a refused forward simply leaves it null.
@@ -1389,6 +1390,11 @@ public sealed class TriggerZoneMonitor(
 
         // Read off the session's copy when the verdict is resolved, so it belongs here too.
         if (a.KeepOnlyAlertable != b.KeepOnlyAlertable) return false;
+
+        // Read off the session copy at forward time like BypassFastLocal, so it belongs here for the
+        // same reason. Compared by content: two lists with the same keys are the same setting.
+        if (!(a.FastLocalClasses ?? []).SequenceEqual(b.FastLocalClasses ?? []) || (a.FastLocalClasses is null) != (b.FastLocalClasses is null))
+            return false;
 
         // The whole zone list, not just the primary polygon: this is what decides whether the
         // reconcile loop tears down and rebuilds the detection session, so a field missed here is

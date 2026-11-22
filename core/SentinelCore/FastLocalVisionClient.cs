@@ -55,7 +55,11 @@ public sealed class FastLocalVisionClient(
         // single-frame detector has no way to use.
         var detections = await detector.DetectAsync(alert.ImageBytes, profile.Crop, cancellationToken);
 
-        var analysis = MapToAnalysis(detections, options.CurrentValue);
+        // The camera's own category list (TriggerConfig.FastLocalClasses), when it has one: a
+        // detection of anything else is treated as if it wasn't there, so it neither escalates to the
+        // full model nor notifies. Raw below keeps every detection, so the event still shows what the
+        // detector saw and chose to ignore.
+        var analysis = MapToAnalysis(FastLocalCategories.Filter(detections, alert.FastLocalClasses), options.CurrentValue);
         var raw = JsonSerializer.Serialize(detections);
         var model = $"fastlocal/{detector.ModelName}";
 
@@ -180,4 +184,54 @@ public sealed class FastLocalVisionClient(
         2 => $"{parts[0]} and {parts[1]}",
         _ => $"{string.Join(", ", parts[..^1])}, and {parts[^1]}"
     };
+}
+
+// The fast detector's categories as a camera chooses them - TriggerConfig.FastLocalClasses. The
+// keys are the stable wire format every client sends and stores ("person", "truck", "bird"...), in
+// the order the pickers list them; COCO class ids never leave this file.
+//
+// No list (null) means every category, which is what every camera did before this existed. An
+// empty list is refused at the API rather than meaning "nothing": a camera whose detector can find
+// nothing never escalates to the full model, so it would go silently blind.
+public static class FastLocalCategories
+{
+    public static readonly IReadOnlyList<(string Key, int ClassId, string Group)> All =
+    [
+        ("person", 1, "person"),
+        ("car", 3, "vehicle"),
+        ("truck", 8, "vehicle"),
+        ("motorcycle", 4, "vehicle"),
+        ("bicycle", 2, "vehicle"),
+        ("bus", 6, "vehicle"),
+        ("dog", 18, "animal"),
+        ("cat", 17, "animal"),
+        ("bird", 16, "animal"),
+        ("horse", 19, "animal"),
+        ("cow", 21, "animal"),
+        ("sheep", 20, "animal"),
+        ("bear", 23, "animal"),
+        ("elephant", 22, "animal"),
+    ];
+
+    public static IReadOnlyList<string> Keys { get; } = All.Select(c => c.Key).ToList();
+
+    // Known keys only, lower-cased, de-duplicated and in the pickers' order - so two clients that
+    // tick the same boxes in a different order store the same thing. Null in, null out.
+    public static IReadOnlyList<string>? Normalize(IEnumerable<string>? keys)
+    {
+        if (keys is null) return null;
+        var wanted = keys.Select(k => k.Trim().ToLowerInvariant()).ToHashSet();
+        return Keys.Where(wanted.Contains).ToList();
+    }
+
+    public static IReadOnlyList<string> Unknown(IEnumerable<string> keys) =>
+        keys.Select(k => k.Trim().ToLowerInvariant()).Where(k => !Keys.Contains(k)).Distinct().ToList();
+
+    public static IReadOnlyList<FastLocalDetection> Filter(
+        IReadOnlyList<FastLocalDetection> detections, IReadOnlyList<string>? keys)
+    {
+        if (keys is null) return detections;
+        var ids = All.Where(c => keys.Contains(c.Key)).Select(c => c.ClassId).ToHashSet();
+        return detections.Where(d => ids.Contains(d.ClassId)).ToList();
+    }
 }
