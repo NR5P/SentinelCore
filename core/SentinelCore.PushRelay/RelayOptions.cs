@@ -13,6 +13,27 @@ public sealed class RelayOptions
     public ApplePushOptions Apple { get; init; } = new();
     public FirebasePushOptions Firebase { get; init; } = new();
 
+    // Other products whose licenses this relay also serves (ReelHouse), keyed by the license's
+    // Product. Only the APNs topic differs - same Apple key and Firebase project. A license whose
+    // Product isn't listed here (every Sentinel Core license) uses Apple.BundleId/TvBundleId.
+    public Dictionary<string, RelayProductOptions> Products { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string ResolveApnsTopic(string? product, string appVariant)
+    {
+        // Matched by hand rather than trusting the dictionary's comparer, which configuration
+        // binding doesn't always keep.
+        var configured = string.IsNullOrWhiteSpace(product)
+            ? null
+            : Products.FirstOrDefault(p => string.Equals(p.Key, product.Trim(), StringComparison.OrdinalIgnoreCase)).Value;
+        if (configured is not null && !string.IsNullOrWhiteSpace(configured.AppleBundleId))
+        {
+            return string.Equals(appVariant, "tvos", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(configured.AppleTvBundleId)
+                ? configured.AppleTvBundleId
+                : configured.AppleBundleId;
+        }
+        return Apple.ResolveApnsTopic(appVariant);
+    }
+
     [Required]
     public string DataDirectory { get; init; } = "data";
 
@@ -69,4 +90,10 @@ public sealed class RelayOptions
     // install; overridable only so the tests can sign with a throwaway key. Never set this in a
     // real deployment.
     public string LicensePublicKeyPem { get; init; } = LicensePublicKey.Pem;
+}
+
+public sealed class RelayProductOptions
+{
+    public string AppleBundleId { get; init; } = string.Empty;
+    public string AppleTvBundleId { get; init; } = string.Empty;
 }

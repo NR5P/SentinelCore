@@ -110,7 +110,7 @@ always wins. To exercise the relay end to end, temporarily turn one off:
 3. Within about 20 seconds the reconciler re-registers every known device -
    `journalctl -u sentinelcore-push-relay -f` shows one `registered a apple device` line each.
 4. Settings → PUSH NOTIFICATIONS → **Send Test**. The relay logs
-   `<you> (<license id>) push to apple: Delivered` and the phone buzzes.
+   `<you> (<license id>, SentinelCore) push to apple: Delivered` and the phone buzzes.
 5. Tick Apple back on, untick Apple Sandbox, save, restart. The next test goes direct: nothing
    new in the relay's journal.
 
@@ -147,6 +147,39 @@ always wins. To exercise the relay end to end, temporarily turn one off:
   six hours. An entry that isn't a GUID is ignored with a warning in the journal.
 - Rotating the APNs key or the Firebase account: replace the file, update the path if it changed,
   `./scripts/deploy.sh relay`. Customers notice nothing.
+
+## Other products (ReelHouse)
+
+The relay also carries pushes for ReelHouse, the media-server app. A ReelHouse install sends its
+own signed license in the same header, and it is verified with the same key and subject to the
+same device limits, rate limits and `BlockedLicenseIds` as a Sentinel Core license. The one
+difference is which Apple app the push goes to: the license's `Product` picks the APNs topic from
+`Relay:Products` in `appsettings.json` (keys are matched case-insensitively):
+
+```json
+"Relay": {
+  "Products": {
+    "ReelHouse": { "AppleBundleId": "com.reelhouse.client", "AppleTvBundleId": "com.reelhouse.client.tv" }
+  }
+}
+```
+
+A device registered with `appVariant` `tvos` gets `AppleTvBundleId` when it's set, everything
+else `AppleBundleId`. A license whose `Product` isn't listed, which includes every Sentinel Core
+license, keeps using `Relay:Apple:BundleId`/`TvBundleId`. The Apple key and the Firebase project
+are shared, so nothing else needs configuring. The bundle ids must belong to the same Apple team as
+the relay's APNs key. To add another product, add another entry and issue its licenses with
+`--product "<Name>"`.
+
+ReelHouse messages set `data` (and optionally `androidChannel` and `threadId`) on the pushed
+message. A message with `data` gets a plain alert instead of Sentinel's security payload: on
+Apple, `aps` carries the alert, `sound`, `thread-id` (`threadId`, else `eventType`, else
+`notification`) and `interruption-level: active`, with each `data` entry as a top-level key. On
+Android, the FCM `data` is `data` plus `title` and `body`, the channel is `androidChannel` (default
+`general`), and the tag matches the Apple thread. Messages without `data`, which includes every
+Sentinel Core push, are sent exactly as before. The registration's `appVariant` may also be
+`android`. The journal line for a push now names the product too:
+`Jane Doe (3f2a…, SentinelCore) push to apple: Delivered`.
 
 ## Moving it to a proper host later
 

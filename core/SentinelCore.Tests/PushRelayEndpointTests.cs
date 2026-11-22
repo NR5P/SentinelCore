@@ -75,6 +75,9 @@ public sealed class PushRelayEndpointTests : IDisposable
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(handler.Requests);
+        // Product-neutral: a ReelHouse install reads this too.
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct)).RootElement;
+        Assert.Equal("A valid license is required. Install one in the dashboard under Settings → LICENSE.", body.GetProperty("error").GetString());
     }
 
     // Signed with a different key entirely - the shape is perfect, only the signature is wrong.
@@ -292,7 +295,175 @@ public sealed class PushRelayEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
-    private WebApplicationFactory<RelayProgram> CreateFactory(HttpMessageHandler handler, int maxDevices = 25, string[]? blockedLicenseIds = null) =>
+    // The relay also carries ReelHouse. Its licenses verify with the same key, and the license's
+    // Product picks the APNs topic from Relay:Products - the committed appsettings.json entry,
+    // which these tests deliberately don't override. Sentinel Core licenses are untouched.
+    [Fact]
+    public async Task Push_WithAReelHouseLicense_UsesTheReelHouseTopic_WhileSentinelKeepsItsOwn()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(_ => (HttpStatusCode.OK, "{}"));
+        using var factory = CreateFactory(handler);
+        using var client = factory.CreateClient();
+        var reelHouse = Issue("Media Fan", product: "ReelHouse");
+        var lowerCase = Issue("Other Fan", product: "reelhouse");
+        var sentinel = Issue("Jane Doe");
+
+        foreach (var (token, variant, license) in new[]
+                 {
+                     ("rh-phone", "ios", reelHouse), ("rh-tv", "tvos", reelHouse),
+                     ("rh-lower", "ios", lowerCase), ("sc-phone", "ios", sentinel)
+                 })
+        {
+            using var register = await client.PostAsJsonAsync("/v1/devices", RegisterBody(token, variant), ct, license);
+            Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+            using var push = await client.PostAsJsonAsync("/v1/push", PushBody(token, variant), ct, license);
+            Assert.Equal(HttpStatusCode.OK, push.StatusCode);
+        }
+
+        Assert.Equal(
+            ["com.reelhouse.client", "com.reelhouse.client.tv", "com.reelhouse.client", "com.sentinelcore.client"],
+            handler.Requests.Select(r => r.Headers["apns-topic"]).ToArray());
+    }
+
+    [Fact]
+    public async Task Push_WithData_SendsAGenericApnsPayload()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(_ => (HttpStatusCode.OK, "{}"));
+        using var factory = CreateFactory(handler);
+        using var client = factory.CreateClient();
+        var license = Issue("Media Fan", product: "ReelHouse");
+
+        using var register = await client.PostAsJsonAsync("/v1/devices", RegisterBody("rh-phone"), ct, license);
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+        using var push = await client.PostAsJsonAsync("/v1/push", ReelHousePushBody("rh-phone"), ct, license);
+        Assert.Equal(HttpStatusCode.OK, push.StatusCode);
+
+        var sent = Assert.Single(handler.Requests);
+        Assert.Equal("alert", sent.Headers["apns-push-type"]);
+        var payload = JsonDocument.Parse(sent.Body).RootElement;
+        var aps = payload.GetProperty("aps");
+        Assert.Equal("New episode", aps.GetProperty("alert").GetProperty("title").GetString());
+        Assert.Equal("Severance S02E04 is ready to watch.", aps.GetProperty("alert").GetProperty("body").GetString());
+        Assert.Equal("default", aps.GetProperty("sound").GetString());
+        Assert.Equal("show-7", aps.GetProperty("thread-id").GetString());
+        Assert.Equal("active", aps.GetProperty("interruption-level").GetString());
+        Assert.False(aps.TryGetProperty("category", out _));
+        Assert.Equal("42", payload.GetProperty("itemId").GetString());
+        Assert.Equal("episode", payload.GetProperty("kind").GetString());
+        foreach (var sentinelKey in new[] { "eventId", "camera", "eventType", "organizerItemId" })
+            Assert.False(payload.TryGetProperty(sentinelKey, out _), $"{sentinelKey} should not be in a generic payload");
+    }
+
+    [Fact]
+    public async Task Push_WithData_ToAndroid_UsesItsChannelTagAndData()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(GoogleOrOk);
+        using var factory = CreateFactory(handler, firebase: true);
+        using var client = factory.CreateClient();
+        var license = Issue("Media Fan", product: "ReelHouse");
+
+        // ReelHouse's Android app says appVariant "android", which the relay now accepts.
+        using var register = await client.PostAsJsonAsync(
+            "/v1/devices", new { platform = "android", token = "fid-1", appVariant = "android", apnsSandbox = false }, ct, license);
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+        using var push = await client.PostAsJsonAsync("/v1/push", ReelHousePushBody("fid-1", "android", "android"), ct, license);
+        Assert.Equal(HttpStatusCode.OK, push.StatusCode);
+        Assert.Equal("delivered", (await push.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("status").GetString());
+
+        var sent = Assert.Single(handler.Requests, r => r.Uri.Host == "fcm.googleapis.com");
+        Assert.Equal("/v1/projects/test-project/messages:send", sent.Uri.AbsolutePath);
+        var message = JsonDocument.Parse(sent.Body).RootElement.GetProperty("message");
+        Assert.Equal("fid-1", message.GetProperty("fid").GetString());
+        Assert.Equal("New episode", message.GetProperty("notification").GetProperty("title").GetString());
+        var data = message.GetProperty("data");
+        Assert.Equal("42", data.GetProperty("itemId").GetString());
+        Assert.Equal("episode", data.GetProperty("kind").GetString());
+        Assert.Equal("New episode", data.GetProperty("title").GetString());
+        Assert.Equal("Severance S02E04 is ready to watch.", data.GetProperty("body").GetString());
+        Assert.False(data.TryGetProperty("eventId", out _));
+        var android = message.GetProperty("android");
+        Assert.Equal("high", android.GetProperty("priority").GetString());
+        Assert.Equal("new_media", android.GetProperty("notification").GetProperty("channel_id").GetString());
+        Assert.Equal("show-7", android.GetProperty("notification").GetProperty("tag").GetString());
+    }
+
+    // Data without a channel or thread falls back to "general" and the event type.
+    [Fact]
+    public async Task Push_WithDataButNoChannelOrThread_UsesTheDefaults()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(GoogleOrOk);
+        using var factory = CreateFactory(handler, firebase: true);
+        using var client = factory.CreateClient();
+        var license = Issue("Media Fan", product: "ReelHouse");
+        var message = new { title = "Ready", body = "A download finished.", eventType = "download", data = new Dictionary<string, string>() };
+
+        using (var r = await client.PostAsJsonAsync("/v1/devices", RegisterBody("rh-phone"), ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/devices", new { platform = "android", token = "fid-2", appVariant = "android", apnsSandbox = false }, ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/push", new { platform = "apple", token = "rh-phone", appVariant = "ios", message }, ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/push", new { platform = "android", token = "fid-2", appVariant = "android", message }, ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+
+        var apns = JsonDocument.Parse(Assert.Single(handler.Requests, r => r.Uri.Host.EndsWith("push.apple.com")).Body).RootElement;
+        Assert.Equal("download", apns.GetProperty("aps").GetProperty("thread-id").GetString());
+        var fcm = JsonDocument.Parse(Assert.Single(handler.Requests, r => r.Uri.Host == "fcm.googleapis.com").Body).RootElement;
+        var notification = fcm.GetProperty("message").GetProperty("android").GetProperty("notification");
+        Assert.Equal("general", notification.GetProperty("channel_id").GetString());
+        Assert.Equal("download", notification.GetProperty("tag").GetString());
+    }
+
+    // No Data is every Sentinel Core push: exactly the security payload it always was.
+    [Fact]
+    public async Task Push_WithoutData_KeepsTheSecurityPayload_OnBothPlatforms()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(GoogleOrOk);
+        using var factory = CreateFactory(handler, firebase: true);
+        using var client = factory.CreateClient();
+        var license = Issue("Jane Doe");
+
+        using (var r = await client.PostAsJsonAsync("/v1/devices", RegisterBody("sc-phone"), ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/devices", new { platform = "android", token = "fid-sc", appVariant = "ios", apnsSandbox = false }, ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/push", PushBody("sc-phone"), ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        var androidPush = new { platform = "android", token = "fid-sc", appVariant = "ios", message = new { title = "Front door", body = "A person is at the door.", eventId = "evt-1", camera = "Front door", eventType = "person" } };
+        using (var r = await client.PostAsJsonAsync("/v1/push", androidPush, ct, license))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+
+        var apns = JsonDocument.Parse(Assert.Single(handler.Requests, r => r.Uri.Host.EndsWith("push.apple.com")).Body).RootElement;
+        Assert.Equal("SECURITY_EVENT", apns.GetProperty("aps").GetProperty("category").GetString());
+        Assert.Equal("Front door", apns.GetProperty("aps").GetProperty("thread-id").GetString());
+        Assert.Equal("evt-1", apns.GetProperty("eventId").GetString());
+        Assert.Equal("person", apns.GetProperty("eventType").GetString());
+
+        var fcm = JsonDocument.Parse(Assert.Single(handler.Requests, r => r.Uri.Host == "fcm.googleapis.com").Body).RootElement.GetProperty("message");
+        Assert.Equal("security_alerts", fcm.GetProperty("android").GetProperty("notification").GetProperty("channel_id").GetString());
+        Assert.Equal("evt-1", fcm.GetProperty("android").GetProperty("notification").GetProperty("tag").GetString());
+        Assert.Equal("evt-1", fcm.GetProperty("data").GetProperty("eventId").GetString());
+        Assert.False(fcm.GetProperty("data").TryGetProperty("title", out _));
+    }
+
+    [Fact]
+    public async Task Register_WithAnUnknownAppVariant_Is400()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(new RecordingHandler(_ => (HttpStatusCode.OK, "{}")));
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/v1/devices", RegisterBody("w-1", variant: "watchos"), ct, Issue("Jane Doe"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private WebApplicationFactory<RelayProgram> CreateFactory(HttpMessageHandler handler, int maxDevices = 25, string[]? blockedLicenseIds = null, bool firebase = false) =>
         new WebApplicationFactory<RelayProgram>().WithWebHostBuilder(builder => builder
             // Last, so it outranks the committed appsettings.json; also the provider the reload
             // test edits.
@@ -307,17 +478,58 @@ public sealed class PushRelayEndpointTests : IDisposable
             .UseSetting("Relay:Apple:BundleId", "com.sentinelcore.client")
             .UseSetting("Relay:Apple:TvBundleId", "com.sentinelcore.client.tv")
             .UseSetting("Relay:Apple:PrivateKeyPath", _apnsKeyPath)
-            .UseSetting("Relay:Firebase:Enabled", "false")
+            .UseSetting("Relay:Firebase:Enabled", firebase ? "true" : "false")
+            .UseSetting("Relay:Firebase:ProjectId", firebase ? "test-project" : "")
+            .UseSetting("Relay:Firebase:ServiceAccountPath", firebase ? WriteFirebaseServiceAccount() : "")
             .ConfigureTestServices(services =>
                 services.AddSingleton<IHttpClientFactory>(new SingleClientFactory(handler))));
 
-    private string Issue(string customer) => IssueWithId(customer).License;
+    private string Issue(string customer, string product = "SentinelCore") => IssueWithId(customer, product).License;
 
-    private (Guid Id, string License) IssueWithId(string customer)
+    private (Guid Id, string License) IssueWithId(string customer, string product = "SentinelCore")
     {
         var id = Guid.NewGuid();
-        return (id, LicenseSigner.Sign(new LicenseInfo(customer, "c@example.com", "SentinelCore", id, DateTimeOffset.UtcNow), _signingKey));
+        return (id, LicenseSigner.Sign(new LicenseInfo(customer, "c@example.com", product, id, DateTimeOffset.UtcNow), _signingKey));
     }
+
+    // A throwaway service account: the fake handler answers its OAuth exchange, so all that
+    // matters is that FcmSender can sign the assertion with it.
+    private string WriteFirebaseServiceAccount()
+    {
+        var path = Path.Combine(_dataDirectory, "firebase-service-account.json");
+        if (File.Exists(path)) return path;
+        using var key = RSA.Create(2048);
+        File.WriteAllText(path, JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["client_email"] = "relay@test-project.iam.gserviceaccount.com",
+            ["private_key"] = key.ExportPkcs8PrivateKeyPem(),
+            ["token_uri"] = "https://oauth2.googleapis.com/token"
+        }));
+        return path;
+    }
+
+    // Answers Google's token endpoint for the FCM tests; everything else is a plain success.
+    private static (HttpStatusCode, string) GoogleOrOk(HttpRequestMessage request) =>
+        request.RequestUri!.Host == "oauth2.googleapis.com"
+            ? (HttpStatusCode.OK, """{"access_token":"test-access-token","expires_in":3600}""")
+            : (HttpStatusCode.OK, "{}");
+
+    // What ReelHouse sends: its own Data, channel and thread, and none of Sentinel's fields.
+    private static object ReelHousePushBody(string token, string platform = "apple", string variant = "ios") => new
+    {
+        platform,
+        token,
+        appVariant = variant,
+        message = new
+        {
+            title = "New episode",
+            body = "Severance S02E04 is ready to watch.",
+            eventType = "new-episode",
+            data = new Dictionary<string, string> { ["itemId"] = "42", ["kind"] = "episode" },
+            androidChannel = "new_media",
+            threadId = "show-7"
+        }
+    };
 
     private static object RegisterBody(string token, string variant = "ios", bool sandbox = false) =>
         new { platform = "apple", token, appVariant = variant, apnsSandbox = sandbox };

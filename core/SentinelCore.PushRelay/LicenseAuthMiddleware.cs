@@ -33,7 +33,7 @@ public sealed class LicenseAuthMiddleware(RequestDelegate next, IOptionsMonitor<
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsJsonAsync(new
             {
-                error = "A valid Sentinel Core license is required. Install one in the dashboard under Settings → LICENSE."
+                error = "A valid license is required. Install one in the dashboard under Settings → LICENSE."
             });
             return;
         }

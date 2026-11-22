@@ -52,6 +52,28 @@ public sealed class FcmSender(
                             android = new { priority = "normal" }
                         }
                     })
+                    : message.Data is not null
+                    // Another product's notification: its own Data plus the text, its own
+                    // channel, and no Sentinel keys.
+                    ? JsonSerializer.Serialize(new
+                    {
+                        message = new
+                        {
+                            fid = deviceToken,
+                            notification = new { title = message.Title, body = message.Body },
+                            data = GenericData(message),
+                            android = new
+                            {
+                                priority = "high",
+                                notification = new
+                                {
+                                    channel_id = message.AndroidChannel ?? "general",
+                                    sound = "default",
+                                    tag = message.ThreadId ?? message.EventType ?? "notification"
+                                }
+                            }
+                        }
+                    })
                     : JsonSerializer.Serialize(new
                 {
                     message = new
@@ -110,6 +132,16 @@ public sealed class FcmSender(
             data["organizerItemId"] = item;
             data["organizerPane"] = "boards";
         }
+        return data;
+    }
+
+    private static Dictionary<string, string> GenericData(PushMessage message)
+    {
+        var data = new Dictionary<string, string>(message.Data!)
+        {
+            ["title"] = message.Title,
+            ["body"] = message.Body
+        };
         return data;
     }
 

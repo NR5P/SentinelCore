@@ -17,7 +17,15 @@ public sealed record PushMessage(
     // An Organizer item to open when the notification is tapped (a board automation's card).
     // The apps already open the Organizer for "organizerItemId", which their own reminder alerts
     // carry; older relays ignore the property.
-    string? OrganizerItemId = null)
+    string? OrganizerItemId = null,
+    // A generic notification for another product the relay carries (ReelHouse). Non-null Data
+    // switches both senders from Sentinel's security payload to a plain alert whose Data entries
+    // are handed to the app as-is; AndroidChannel and ThreadId pick the Android notification
+    // channel and the APNs thread / FCM tag. Sentinel Core never sets these, and older relays
+    // ignore the properties.
+    IReadOnlyDictionary<string, string>? Data = null,
+    string? AndroidChannel = null,
+    string? ThreadId = null)
 {
     public const string OrganizerType = "organizer";
 

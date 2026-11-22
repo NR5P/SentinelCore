@@ -56,6 +56,8 @@ public sealed class ApnsSender(
                         aps = new Dictionary<string, object?> { ["content-available"] = 1 },
                         eventType = message.EventType
                     })
+                    : message.Data is not null
+                    ? JsonSerializer.Serialize(GenericPayload(message))
                     : JsonSerializer.Serialize(new
                     {
                         aps = new Dictionary<string, object?>
@@ -95,6 +97,25 @@ public sealed class ApnsSender(
                string.Equals(reason, "Unregistered", StringComparison.OrdinalIgnoreCase)
             ? PushAttempt.Unregistered
             : PushAttempt.Failed;
+    }
+
+    // A plain alert for a message that carries its own Data (another product's notification):
+    // none of Sentinel's security keys, just the alert and the Data entries at the top level,
+    // which is where an iOS app reads custom keys from userInfo. "aps" is set last so a Data key
+    // can never replace it.
+    private static Dictionary<string, object?> GenericPayload(PushMessage message)
+    {
+        var payload = new Dictionary<string, object?>();
+        foreach (var (key, value) in message.Data!)
+            payload[key] = value;
+        payload["aps"] = new Dictionary<string, object?>
+        {
+            ["alert"] = new { title = message.Title, body = message.Body },
+            ["sound"] = "default",
+            ["thread-id"] = message.ThreadId ?? message.EventType ?? "notification",
+            ["interruption-level"] = "active"
+        };
+        return payload;
     }
 
     private async Task<string> GetProviderTokenAsync(ApplePushOptions options, CancellationToken cancellationToken)

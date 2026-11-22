@@ -118,7 +118,9 @@ public static class RelayEndpoints
                     options.Value.Apple,
                     device.ApnsSandbox,
                     device.Token,
-                    options.Value.Apple.ResolveApnsTopic(device.AppVariant),
+                    // The license's product picks the app: a ReelHouse license pushes to the
+                    // ReelHouse bundle, everything else to Sentinel Core's.
+                    options.Value.ResolveApnsTopic(license.Product, device.AppVariant),
                     request.Message!,
                     ct),
                 PushPlatforms.Android => await fcm.SendAsync(options.Value.Firebase, device.Token, request.Message!, ct),
@@ -131,8 +133,8 @@ public static class RelayEndpoints
             // Who, which platform, what happened - and not what the message said. The text passes
             // through this process but is nobody's business to keep.
             logger.LogInformation(
-                "{Customer} ({LicenseId}) push to {Platform}: {Outcome}",
-                license.CustomerName, license.LicenseId, device.Platform, attempt);
+                "{Customer} ({LicenseId}, {Product}) push to {Platform}: {Outcome}",
+                license.CustomerName, license.LicenseId, license.Product, device.Platform, attempt);
 
             return Results.Ok(new { status = attempt.ToString().ToLowerInvariant() });
         }).RequireRateLimiting(PushRateLimitPolicy);
@@ -160,8 +162,8 @@ public static class RelayEndpoints
             errors.Add("A push token is required.");
         else if (token.Length > 4096)
             errors.Add("The push token is too long.");
-        if (!string.IsNullOrWhiteSpace(appVariant) && NormalizeVariant(appVariant) is not ("ios" or "tvos"))
-            errors.Add("AppVariant must be 'ios' or 'tvos'.");
+        if (!string.IsNullOrWhiteSpace(appVariant) && NormalizeVariant(appVariant) is not ("ios" or "tvos" or "android"))
+            errors.Add("AppVariant must be 'ios', 'tvos' or 'android'.");
         return errors;
     }
 }
